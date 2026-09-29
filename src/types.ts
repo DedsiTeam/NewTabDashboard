@@ -81,26 +81,18 @@ export interface ShortcutSection {
   id: string;
   title: string;
   shortcuts: Shortcut[];
-  columns?: 1 | 2;
+  columns?: number;
+  layout?: { x: number; y: number };
 }
 
 export interface DashboardGroup {
   id: string;
   title: string;
   sections: ShortcutSection[];
-}
-
-export interface TodoItem {
-  id: string;
-  title: string;
-  content: string;
-  color: string;
+  columns?: number;
 }
 
 export interface DashboardState {
   groups: DashboardGroup[];
   userName: string;
-  todos: TodoItem[];
-  todoCollapsed: boolean;
-  collapsedSectionIds: string[];
 }

@@ -11,11 +11,8 @@ interface PersistedDashboard {
 }
 
 const emptyState = (): DashboardState => ({
-  groups: [],
+  groups: [{ id: 'dashboard', title: '快捷入口', sections: [] }],
   userName: '',
-  todos: [],
-  todoCollapsed: true,
-  collapsedSectionIds: [],
 });
 
 function hasChromeStorage() {
@@ -30,32 +27,20 @@ function isDashboardState(value: unknown): value is DashboardState {
 
 function normalizeDashboardState(value: DashboardState): DashboardState {
   return {
-    groups: value.groups,
     userName: typeof value.userName === 'string' ? value.userName.trim() : '',
-    todoCollapsed:
-      typeof value.todoCollapsed === 'boolean' ? value.todoCollapsed : true,
-    collapsedSectionIds: Array.isArray(value.collapsedSectionIds)
-      ? value.collapsedSectionIds.filter((id): id is string => typeof id === 'string')
-      : [],
-    todos: Array.isArray(value.todos)
-      ? value.todos
-          .filter(
-            (todo) =>
-              todo &&
-              typeof todo === 'object' &&
-              typeof todo.id === 'string' &&
-              typeof todo.title === 'string',
-          )
-          .map((todo) => ({
-            id: todo.id,
-            title: todo.title,
-            content: typeof todo.content === 'string' ? todo.content : '',
-            color:
-              typeof todo.color === 'string' && /^#[0-9a-f]{6}$/i.test(todo.color)
-                ? todo.color
-                : '#1d4ed8',
-          }))
-      : [],
+    // Keep every existing link while converting older two-level layouts to one card grid.
+    groups: [{
+      id: 'dashboard',
+      title: '快捷入口',
+      sections: value.groups.flatMap((group) => Array.isArray(group.sections) ? group.sections : []).map((section) => ({
+        ...section,
+        columns: Math.min(5, Math.max(2, Number(section.columns) || 3)),
+        layout: Number.isInteger(section.layout?.x) && Number.isInteger(section.layout?.y)
+          && section.layout!.x >= 0 && section.layout!.y >= 0
+          ? { x: section.layout!.x, y: section.layout!.y }
+          : undefined,
+      })),
+    }],
   };
 }
 

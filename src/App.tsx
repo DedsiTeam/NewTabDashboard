@@ -1,10 +1,5 @@
 import {
   Check,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsDownUp,
-  ChevronsUpDown,
   Database,
   GripVertical,
   Pencil,
@@ -26,8 +21,6 @@ import {
   NameDialog,
   SectionSettingsDialog,
   ShortcutDialog,
-  TodoDetailDialog,
-  TodoDialog,
 } from './dialogs';
 import {
   buildGroupsFromBookmarks,
@@ -35,6 +28,7 @@ import {
   type BookmarkImportNode,
 } from './bookmarks';
 import { getFaviconCandidates } from './favicon';
+import { placeGridItems, type GridItem } from './gridLayout';
 import { shortcutIconMap } from './iconCatalog';
 import {
   downloadDashboardBackup,
@@ -42,11 +36,17 @@ import {
   readDashboardBackup,
   saveDashboardState,
 } from './storage';
-import { TodoPanel } from './TodoPanel';
-import type { DashboardGroup, Shortcut, TodoItem } from './types';
+import type { DashboardGroup, Shortcut } from './types';
 
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function estimatedCardSpan(shortcutCount: number, columns: number) {
+  const rows = Math.ceil(shortcutCount / columns);
+  // Reserve enough space until ResizeObserver reads the card's real height.
+  const height = rows === 0 ? 140 : 80 + rows * 105;
+  return Math.ceil((height + 10) / 20);
 }
 
 type ViewTransitionDocument = Document & {
@@ -67,37 +67,26 @@ type ShortcutDialogTarget =
   | { mode: 'add'; groupId: string; sectionId: string }
   | { mode: 'edit'; groupId: string; sectionId: string; shortcut: Shortcut };
 
-type TodoDialogTarget = { mode: 'add' } | { mode: 'edit'; todo: TodoItem };
-
 type SectionSettingsTarget = {
   groupId: string;
   sectionId: string;
   title: string;
-  columns: 1 | 2;
+  columns: number;
 };
 
 type NameDialogState =
-  | { kind: 'group' }
-  | { kind: 'edit-group'; groupId: string; title: string }
   | { kind: 'section'; groupId: string }
   | { kind: 'edit-section'; groupId: string; sectionId: string; title: string }
   | { kind: 'user' }
   | null;
 
 type ConfirmDialogState =
-  | { kind: 'group'; groupId: string; title: string }
   | { kind: 'section'; groupId: string; sectionId: string; title: string }
   | { kind: 'shortcut'; groupId: string; sectionId: string; shortcutId: string; title: string }
-  | { kind: 'todo'; todoId: string; title: string }
   | null;
 
 type DraggedSection = { groupId: string; sectionId: string };
-type SectionDropTarget = {
-  groupId: string;
-  sectionId: string | null;
-  position: 'before' | 'after';
-};
-type GroupDropTarget = { groupId: string; position: 'before' | 'after' };
+type GridCell = { x: number; y: number };
 type DraggedShortcut = DraggedSection & { shortcutId: string };
 type ShortcutDropTarget = DraggedSection & {
   shortcutId: string | null;
@@ -139,12 +128,6 @@ function ShortcutVisual({ shortcut }: { shortcut: Shortcut }) {
 
 function App() {
   const [groups, setGroups] = useState<DashboardGroup[]>([]);
-  const [todos, setTodos] = useState<TodoItem[]>([]);
-  const [todoQuery, setTodoQuery] = useState('');
-  const [todoDialog, setTodoDialog] = useState<TodoDialogTarget | null>(null);
-  const [viewingTodo, setViewingTodo] = useState<TodoItem | null>(null);
-  const [todoCollapsed, setTodoCollapsed] = useState(true);
-  const [collapsedSectionIds, setCollapsedSectionIds] = useState<string[]>([]);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [userName, setUserName] = useState('');
@@ -157,14 +140,24 @@ function App() {
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
   const [bookmarkTree, setBookmarkTree] = useState<BookmarkImportNode[] | null>(null);
   const [draggedSection, setDraggedSection] = useState<DraggedSection | null>(null);
-  const [sectionDropTarget, setSectionDropTarget] = useState<SectionDropTarget | null>(null);
-  const [draggedGroupId, setDraggedGroupId] = useState<string | null>(null);
-  const [groupDropTarget, setGroupDropTarget] = useState<GroupDropTarget | null>(null);
+  const [cardDragPoint, setCardDragPoint] = useState<{ x: number; y: number } | null>(null);
+  const [cardDropCell, setCardDropCell] = useState<GridCell | null>(null);
+  const [railColumns, setRailColumns] = useState(12);
+  const [compactGrid, setCompactGrid] = useState(false);
+  const [measuredCardSpans, setMeasuredCardSpans] = useState<Record<string, { signature: string; span: number }>>({});
+  const railRef = useRef<HTMLDivElement>(null);
   const [draggedShortcut, setDraggedShortcut] = useState<DraggedShortcut | null>(null);
   const [shortcutDropTarget, setShortcutDropTarget] = useState<ShortcutDropTarget | null>(null);
   const [shortcutTooltip, setShortcutTooltip] = useState<ShortcutTooltip | null>(null);
-  const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
-  const railRef = useRef<HTMLDivElement>(null);
+  const cardDragRef = useRef<{
+    source: DraggedSection;
+    startX: number;
+    startY: number;
+    offsetX: number;
+    offsetY: number;
+    target: GridCell | null;
+    active: boolean;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -172,9 +165,6 @@ function App() {
       if (cancelled) return;
       setGroups(state.groups);
       setUserName(state.userName);
-      setTodos(state.todos);
-      setTodoCollapsed(state.todoCollapsed);
-      setCollapsedSectionIds(state.collapsedSectionIds);
       setIsHydrated(true);
     });
     return () => {
@@ -189,10 +179,43 @@ function App() {
 
   useEffect(() => {
     if (!isHydrated) return;
-    void saveDashboardState({ groups, userName, todos, todoCollapsed, collapsedSectionIds }).catch((error) => {
+    void saveDashboardState({ groups, userName }).catch((error) => {
       console.error('Failed to save dashboard state:', error);
     });
-  }, [collapsedSectionIds, groups, isHydrated, todoCollapsed, todos, userName]);
+  }, [groups, isHydrated, userName]);
+
+  useEffect(() => {
+    const rail = railRef.current;
+    if (!rail) return;
+    const observer = new ResizeObserver((entries) => {
+      const measured: Record<string, { signature: string; span: number }> = {};
+      for (const entry of entries) {
+        if (entry.target === rail) {
+          const columns = Math.max(1, Math.floor((rail.clientWidth + 14) / 94));
+          setRailColumns((current) => current === columns ? current : columns);
+          setCompactGrid((current) => current === (window.innerWidth <= 600) ? current : window.innerWidth <= 600);
+          continue;
+        }
+        const card = entry.target as HTMLElement;
+        const id = card.dataset.sectionId;
+        const signature = card.dataset.layoutSignature;
+        if (!id || !signature) continue;
+        const height = card.offsetHeight;
+        measured[id] = { signature, span: Math.max(1, Math.ceil((height + 10) / 20)) };
+      }
+      if (Object.keys(measured).length) {
+        setMeasuredCardSpans((current) => {
+          const changed = Object.entries(measured).some(([id, value]) =>
+            current[id]?.signature !== value.signature || current[id]?.span !== value.span,
+          );
+          return changed ? { ...current, ...measured } : current;
+        });
+      }
+    });
+    observer.observe(rail);
+    rail.querySelectorAll<HTMLElement>('.shortcut-section').forEach((card) => observer.observe(card));
+    return () => observer.disconnect();
+  }, [groups, railColumns, compactGrid]);
 
   useEffect(() => {
     function handleGlobalSearchShortcut(event: KeyboardEvent) {
@@ -204,26 +227,6 @@ function App() {
     window.addEventListener('keydown', handleGlobalSearchShortcut);
     return () => window.removeEventListener('keydown', handleGlobalSearchShortcut);
   }, []);
-
-  useEffect(() => {
-    const rail = railRef.current;
-    if (!rail) return;
-
-    const updateOverflow = () => {
-      setHasHorizontalOverflow(rail.scrollWidth > rail.clientWidth + 1);
-    };
-
-    updateOverflow();
-    const frame = window.requestAnimationFrame(updateOverflow);
-    const resizeObserver = new ResizeObserver(updateOverflow);
-    resizeObserver.observe(rail);
-    Array.from(rail.children).forEach((child) => resizeObserver.observe(child));
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      resizeObserver.disconnect();
-    };
-  }, [groups, isHydrated]);
 
   const time = new Intl.DateTimeFormat('zh-CN', {
     hour: '2-digit',
@@ -238,16 +241,45 @@ function App() {
     weekday: 'long',
   }).format(now);
 
+  const gridItems = useMemo<GridItem[]>(() => groups.flatMap((group) =>
+    group.sections.map((section) => {
+      const columns = Math.min(5, Math.max(2, section.columns ?? 3));
+      const linkColumns = compactGrid ? Math.min(columns, 3) : columns;
+      const signature = `${section.shortcuts.length}:${linkColumns}:${railColumns}`;
+      return {
+        id: section.id,
+        width: compactGrid ? railColumns : Math.min(railColumns, columns + 1),
+        height: measuredCardSpans[section.id]?.signature === signature
+          ? measuredCardSpans[section.id].span
+          : estimatedCardSpan(section.shortcuts.length, linkColumns),
+        x: section.layout?.x,
+        y: section.layout?.y,
+      };
+    }),
+  ), [groups, railColumns, compactGrid, measuredCardSpans]);
+  const gridPositions = useMemo(() => placeGridItems(gridItems, railColumns), [gridItems, railColumns]);
+
+  useEffect(() => {
+    if (!isHydrated || gridItems.some((item) => {
+      const section = groups.flatMap((group) => group.sections).find((candidate) => candidate.id === item.id);
+      if (!section) return true;
+      const columns = Math.min(5, Math.max(2, section.columns ?? 3));
+      const signature = `${section.shortcuts.length}:${compactGrid ? Math.min(columns, 3) : columns}:${railColumns}`;
+      return measuredCardSpans[item.id]?.signature !== signature;
+    })) return;
+    if (groups.every((group) => group.sections.every((section) => section.layout))) return;
+    setGroups((current) => current.map((group) => ({
+      ...group,
+      sections: group.sections.map((section) => section.layout ? section : {
+        ...section,
+        layout: { x: gridPositions[section.id].x, y: gridPositions[section.id].y },
+      }),
+    })));
+  }, [compactGrid, gridItems, gridPositions, groups, isHydrated, measuredCardSpans, railColumns]);
+
   const globalSearchItems = useMemo<GlobalSearchItem[]>(() => {
     const items: GlobalSearchItem[] = [];
     for (const group of groups) {
-      items.push({
-        id: group.id,
-        kind: 'group',
-        title: group.title,
-        subtitle: `${group.sections.length} 个小分组`,
-        searchText: group.title,
-      });
       for (const section of group.sections) {
         items.push({
           id: section.id,
@@ -261,39 +293,14 @@ function App() {
             id: shortcut.id,
             kind: 'shortcut',
             title: shortcut.title,
-            subtitle: `${group.title} / ${section.title} · ${shortcut.url}`,
-            searchText: `${shortcut.title} ${shortcut.url} ${group.title} ${section.title}`,
+            subtitle: `${section.title} · ${shortcut.url}`,
+            searchText: `${shortcut.title} ${shortcut.url} ${section.title}`,
           });
         }
       }
     }
-    for (const todo of todos) {
-      items.push({
-        id: todo.id,
-        kind: 'todo',
-        title: todo.title,
-        subtitle: todo.content,
-        searchText: `${todo.title} ${todo.content}`,
-      });
-    }
     return items;
-  }, [groups, todos]);
-
-  function toggleSectionCollapsed(sectionId: string) {
-    setCollapsedSectionIds((current) =>
-      current.includes(sectionId)
-        ? current.filter((id) => id !== sectionId)
-        : [...current, sectionId],
-    );
-  }
-
-  function setGroupSectionsCollapsed(group: DashboardGroup, collapsed: boolean) {
-    const sectionIds = new Set(group.sections.map((section) => section.id));
-    setCollapsedSectionIds((current) => {
-      const withoutGroup = current.filter((id) => !sectionIds.has(id));
-      return collapsed ? [...withoutGroup, ...sectionIds] : withoutGroup;
-    });
-  }
+  }, [groups]);
 
   function selectGlobalSearchItem(item: GlobalSearchItem) {
     if (item.kind === 'shortcut') {
@@ -305,15 +312,6 @@ function App() {
       return;
     }
 
-    if (item.kind === 'todo') {
-      const todo = todos.find((candidate) => candidate.id === item.id);
-      if (todo) setViewingTodo(todo);
-      return;
-    }
-
-    if (item.kind === 'section') {
-      setCollapsedSectionIds((current) => current.filter((id) => id !== item.id));
-    }
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         document.getElementById(`${item.kind}-${item.id}`)?.scrollIntoView({
@@ -325,56 +323,21 @@ function App() {
     });
   }
 
-  function scrollRail(direction: -1 | 1) {
-    const rail = railRef.current;
-    if (!rail) return;
-    const firstColumn = rail.querySelector<HTMLElement>('.group-column');
-    const distance = (firstColumn?.offsetWidth ?? 420) + 16;
-    rail.scrollBy({ left: direction * distance, behavior: 'smooth' });
-  }
-
-  function moveSection() {
-    if (!draggedSection || !sectionDropTarget) return;
-    if (draggedSection.sectionId === sectionDropTarget.sectionId) {
-      setSectionDropTarget(null);
-      return;
-    }
-
+  function moveSectionToCell(source: DraggedSection, target: GridCell) {
+    const arranged = placeGridItems(gridItems.map((item) => ({
+      ...item,
+      x: item.id === source.sectionId ? target.x : gridPositions[item.id]?.x,
+      y: item.id === source.sectionId ? target.y : gridPositions[item.id]?.y,
+    })), railColumns, source.sectionId);
     commitWithAnimation(() => {
-      setGroups((current) => {
-        const sourceGroup = current.find((group) => group.id === draggedSection.groupId);
-        const movedSection = sourceGroup?.sections.find(
-          (section) => section.id === draggedSection.sectionId,
-        );
-        if (!movedSection) return current;
-
-        const withoutSource = current.map((group) =>
-          group.id === draggedSection.groupId
-            ? {
-                ...group,
-                sections: group.sections.filter((section) => section.id !== draggedSection.sectionId),
-              }
-            : group,
-        );
-
-        return withoutSource.map((group) => {
-          if (group.id !== sectionDropTarget.groupId) return group;
-          const sections = [...group.sections];
-          const targetIndex = sectionDropTarget.sectionId
-            ? sections.findIndex((section) => section.id === sectionDropTarget.sectionId)
-            : -1;
-          const insertIndex =
-            targetIndex < 0
-              ? sections.length
-              : targetIndex + (sectionDropTarget.position === 'after' ? 1 : 0);
-          sections.splice(insertIndex, 0, movedSection);
-          return { ...group, sections };
-        });
-      });
+      setGroups((current) => current.map((group) => ({
+        ...group,
+        sections: group.sections.map((section) => {
+          const position = arranged[section.id];
+          return position ? { ...section, layout: { x: position.x, y: position.y } } : section;
+        }),
+      })));
     });
-
-    setDraggedSection(null);
-    setSectionDropTarget(null);
   }
 
   function moveShortcut() {
@@ -452,50 +415,11 @@ function App() {
     });
   }
 
-  function moveGroup() {
-    if (!draggedGroupId || !groupDropTarget || draggedGroupId === groupDropTarget.groupId) {
-      setGroupDropTarget(null);
-      return;
-    }
-
-    commitWithAnimation(() => {
-      setGroups((current) => {
-        const sourceIndex = current.findIndex((group) => group.id === draggedGroupId);
-        if (sourceIndex < 0) return current;
-
-        const nextGroups = [...current];
-        const [movedGroup] = nextGroups.splice(sourceIndex, 1);
-        const targetIndex = nextGroups.findIndex(
-          (group) => group.id === groupDropTarget.groupId,
-        );
-        if (targetIndex < 0) return current;
-
-        const insertIndex = groupDropTarget.position === 'after' ? targetIndex + 1 : targetIndex;
-        nextGroups.splice(insertIndex, 0, movedGroup);
-        return nextGroups;
-      });
-    });
-
-    setDraggedGroupId(null);
-    setGroupDropTarget(null);
-  }
-
   function saveName(title: string) {
     if (!nameDialog) return;
 
     if (nameDialog.kind === 'user') {
       setUserName(title);
-    } else if (nameDialog.kind === 'group') {
-      setGroups((current) => [
-        ...current,
-        { id: makeId('group'), title, sections: [] },
-      ]);
-    } else if (nameDialog.kind === 'edit-group') {
-      setGroups((current) =>
-        current.map((group) =>
-          group.id === nameDialog.groupId ? { ...group, title } : group,
-        ),
-      );
     } else if (nameDialog.kind === 'edit-section') {
       setGroups((current) =>
         current.map((group) =>
@@ -531,9 +455,7 @@ function App() {
   function runConfirmedAction() {
     if (!confirmDialog) return;
 
-    if (confirmDialog.kind === 'group') {
-      setGroups((current) => current.filter((group) => group.id !== confirmDialog.groupId));
-    } else if (confirmDialog.kind === 'section') {
+    if (confirmDialog.kind === 'section') {
       setGroups((current) =>
         current.map((group) =>
           group.id === confirmDialog.groupId
@@ -566,8 +488,6 @@ function App() {
             : group,
         ),
       );
-    } else {
-      setTodos((current) => current.filter((todo) => todo.id !== confirmDialog.todoId));
     }
 
     setConfirmDialog(null);
@@ -605,15 +525,16 @@ function App() {
     setShortcutDialog(null);
   }
 
-  function saveSectionSettings(columns: 1 | 2) {
+  function saveSectionSettings(columns: number) {
     if (!sectionSettings) return;
+    const safeColumns = Math.min(5, Math.max(2, columns));
     setGroups((current) =>
       current.map((group) =>
         group.id === sectionSettings.groupId
           ? {
               ...group,
               sections: group.sections.map((section) =>
-                section.id === sectionSettings.sectionId ? { ...section, columns } : section,
+                section.id === sectionSettings.sectionId ? { ...section, columns: safeColumns } : section,
               ),
             }
           : group,
@@ -622,42 +543,8 @@ function App() {
     setSectionSettings(null);
   }
 
-  function saveTodo(value: Pick<TodoItem, 'title' | 'content' | 'color'>) {
-    if (!todoDialog) return;
-    setTodos((current) =>
-      todoDialog.mode === 'edit'
-        ? current.map((todo) =>
-            todo.id === todoDialog.todo.id ? { ...todo, ...value } : todo,
-          )
-        : [
-            { id: makeId('todo'), ...value },
-            ...current,
-          ],
-    );
-    setTodoDialog(null);
-  }
-
-  function moveTodo(sourceId: string, targetId: string, position: 'before' | 'after') {
-    if (sourceId === targetId) return;
-    commitWithAnimation(() => {
-      setTodos((current) => {
-        const sourceIndex = current.findIndex((todo) => todo.id === sourceId);
-        if (sourceIndex < 0) return current;
-
-        const nextTodos = [...current];
-        const [movedTodo] = nextTodos.splice(sourceIndex, 1);
-        const targetIndex = nextTodos.findIndex((todo) => todo.id === targetId);
-        if (targetIndex < 0) return current;
-
-        const insertIndex = targetIndex + (position === 'after' ? 1 : 0);
-        nextTodos.splice(insertIndex, 0, movedTodo);
-        return nextTodos;
-      });
-    });
-  }
-
   function exportBackup() {
-    downloadDashboardBackup({ groups, userName, todos, todoCollapsed, collapsedSectionIds });
+    downloadDashboardBackup({ groups, userName });
   }
 
   async function importBackup(file: File) {
@@ -665,9 +552,6 @@ function App() {
     await saveDashboardState(state);
     setGroups(state.groups);
     setUserName(state.userName);
-    setTodos(state.todos);
-    setTodoCollapsed(state.todoCollapsed);
-    setCollapsedSectionIds(state.collapsedSectionIds);
   }
 
   async function openBookmarkImport() {
@@ -679,8 +563,10 @@ function App() {
   function importBookmarks(selectedIds: Set<string>) {
     if (!bookmarkTree) return;
     const importedGroups = buildGroupsFromBookmarks(bookmarkTree, selectedIds);
-    if (importedGroups.length === 0) return;
-    setGroups((current) => [...current, ...importedGroups]);
+    const importedSections = importedGroups.flatMap((group) => group.sections);
+    if (importedSections.length === 0) return;
+    setGroups((current) => current.map((group) => group.id === 'dashboard'
+      ? { ...group, sections: [...group.sections, ...importedSections] } : group));
     setBookmarkTree(null);
   }
 
@@ -689,7 +575,7 @@ function App() {
       <header className="topbar">
         <div className="clock-block" aria-label={`${time}，${date}`}>
           <strong>{time}</strong>
-          <div>
+          <div className="clock-details">
             <p>{date}</p>
             <span className="clock-greeting">
               {userName ? (
@@ -724,14 +610,14 @@ function App() {
             {isEditMode ? <Check size={17} /> : <Settings2 size={17} />}
             <span>{isEditMode ? '完成编辑' : '编辑布局'}</span>
           </button>
-          {(isEditMode || (isHydrated && groups.length === 0)) && (
+          {(isEditMode || (isHydrated && groups.every((group) => group.sections.length === 0))) && (
             <button
               className="add-group-button"
               type="button"
-              onClick={() => setNameDialog({ kind: 'group' })}
+              onClick={() => setNameDialog({ kind: 'section', groupId: 'dashboard' })}
             >
               <Plus size={17} />
-              <span>新建分组</span>
+              <span>新建卡片</span>
             </button>
           )}
           <button
@@ -758,203 +644,48 @@ function App() {
       </header>
 
       <section
-        className={`dashboard-region${todoCollapsed ? ' todo-is-collapsed' : ''}`}
-        aria-label="快捷入口分组"
+        className="dashboard-region"
+        aria-label="快捷入口卡片"
       >
-        <TodoPanel
-          todos={todos}
-          query={todoQuery}
-          onQueryChange={setTodoQuery}
-          onAdd={() => setTodoDialog({ mode: 'add' })}
-          onEdit={(todo) => setTodoDialog({ mode: 'edit', todo })}
-          onDelete={(todo) =>
-            setConfirmDialog({ kind: 'todo', todoId: todo.id, title: todo.title })
-          }
-          onView={setViewingTodo}
-          onMove={moveTodo}
-          collapsed={todoCollapsed}
-          onToggleCollapsed={() => setTodoCollapsed((current) => !current)}
-        />
-
-        {hasHorizontalOverflow && (
-          <button
-            type="button"
-            className="rail-arrow rail-arrow-left"
-            onClick={() => scrollRail(-1)}
-            aria-label="向左查看分组"
-          >
-            <ChevronLeft size={22} />
-          </button>
-        )}
-
         <div className="group-rail" ref={railRef}>
-          {isHydrated && groups.length === 0 && (
+          {isHydrated && groups.every((group) => group.sections.length === 0) && (
             <div className="empty-dashboard">
               <div className="empty-dashboard-icon">
                 <Plus size={30} />
               </div>
-              <h2>创建你的第一个分组</h2>
+              <h2>创建你的第一张卡片</h2>
               <p>把常用网站按工作、学习或任何你喜欢的方式整理起来。</p>
               <button
                 type="button"
                 className="primary-button empty-dashboard-button"
-                onClick={() => setNameDialog({ kind: 'group' })}
+                onClick={() => setNameDialog({ kind: 'section', groupId: 'dashboard' })}
               >
-                <Plus size={18} /> 新建分组
+                <Plus size={18} /> 新建卡片
               </button>
             </div>
           )}
-          {groups.map((group) => {
-            const isDraggingGroup = draggedGroupId === group.id;
-            const areAllSectionsCollapsed =
-              group.sections.length > 0 &&
-              group.sections.every((section) => collapsedSectionIds.includes(section.id));
-            const groupDropPosition =
-              groupDropTarget?.groupId === group.id ? groupDropTarget.position : null;
-
-            return (
-            <article
-              id={`group-${group.id}`}
-              className={`group-column${isDraggingGroup ? ' is-dragging' : ''}${groupDropPosition ? ` drop-${groupDropPosition}` : ''}`}
-              key={group.id}
-              style={{ viewTransitionName: `group-${group.id}` } as CSSProperties}
-              onDragOver={(event) => {
-                if (!draggedGroupId) return;
-                event.preventDefault();
-                event.dataTransfer.dropEffect = 'move';
-                const bounds = event.currentTarget.getBoundingClientRect();
-                const position =
-                  event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
-                setGroupDropTarget({ groupId: group.id, position });
-              }}
-              onDrop={(event) => {
-                if (!draggedGroupId) return;
-                event.preventDefault();
-                moveGroup();
-              }}
-            >
-              <header className="group-header">
-                <div className="group-title-row">
-                  {isEditMode && (
-                    <button
-                      type="button"
-                      className="group-drag-handle"
-                      draggable
-                      aria-label={`拖动调整${group.title}的顺序`}
-                      title="拖动调整大分组顺序"
-                      onDragStart={(event) => {
-                        event.dataTransfer.effectAllowed = 'move';
-                        event.dataTransfer.setData('text/plain', group.id);
-                        const groupElement = event.currentTarget.closest('.group-column');
-                        if (groupElement) {
-                          event.dataTransfer.setDragImage(groupElement, 24, 24);
-                        }
-                        setDraggedGroupId(group.id);
-                      }}
-                      onDragEnd={() => {
-                        setDraggedGroupId(null);
-                        setGroupDropTarget(null);
-                      }}
-                    >
-                      <GripVertical size={18} />
-                    </button>
-                  )}
-                  <h2>{group.title}</h2>
-                </div>
-                <div className="group-actions">
-                  {group.sections.length > 0 && (
-                    <button
-                      type="button"
-                      className="square-button group-collapse-all-button"
-                      onClick={() => setGroupSectionsCollapsed(group, !areAllSectionsCollapsed)}
-                      aria-label={areAllSectionsCollapsed ? `展开${group.title}中的全部小分组` : `折叠${group.title}中的全部小分组`}
-                      title={areAllSectionsCollapsed ? '全部展开' : '全部折叠'}
-                    >
-                      {areAllSectionsCollapsed ? (
-                        <ChevronsUpDown size={17} />
-                      ) : (
-                        <ChevronsDownUp size={17} />
-                      )}
-                    </button>
-                  )}
-                  {isEditMode && <>
-                  <button
-                    type="button"
-                    className="square-button group-edit-button"
-                    onClick={() =>
-                      setNameDialog({
-                        kind: 'edit-group',
-                        groupId: group.id,
-                        title: group.title,
-                      })
-                    }
-                    aria-label={`修改${group.title}的名称`}
-                    title="修改大分组名称"
-                  >
-                    <Pencil size={17} />
-                  </button>
-                  <button
-                    type="button"
-                    className="square-button group-add-section-button"
-                    onClick={() => setNameDialog({ kind: 'section', groupId: group.id })}
-                    aria-label={`在${group.title}中添加小分组`}
-                    title="添加小分组"
-                  >
-                    <Plus size={19} />
-                  </button>
-                  <button
-                    className="square-button group-delete-button"
-                    type="button"
-                    aria-label={`删除${group.title}`}
-                    title="删除大分组"
-                    onClick={() =>
-                      setConfirmDialog({ kind: 'group', groupId: group.id, title: group.title })
-                    }
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                  </>}
-                </div>
-              </header>
-
-              <div className="section-scroll-area">
+          {groups.map((group) => (
+            <div className="flat-card-container" key={group.id}>
                 {group.sections.map((section) => {
-                  const isCollapsed = collapsedSectionIds.includes(section.id);
+                  const columns = Math.min(5, Math.max(2, section.columns ?? 3));
+                  const linkColumns = compactGrid ? Math.min(columns, 3) : columns;
+                  const position = gridPositions[section.id];
                   const isDragging =
                     draggedSection?.groupId === group.id &&
                     draggedSection.sectionId === section.id;
-                  const dropPosition =
-                    sectionDropTarget?.groupId === group.id &&
-                    sectionDropTarget.sectionId === section.id
-                      ? sectionDropTarget.position
-                      : null;
 
                   return (
                   <section
                     id={`section-${section.id}`}
-                    className={`shortcut-section${isCollapsed ? ' is-collapsed' : ''}${isDragging ? ' is-dragging' : ''}${dropPosition ? ` drop-${dropPosition}` : ''}`}
+                    data-section-id={section.id}
+                    data-layout-signature={`${section.shortcuts.length}:${linkColumns}:${railColumns}`}
+                    className={`shortcut-section${isDragging ? ' is-dragging' : ''}`}
                     key={section.id}
-                    style={{ viewTransitionName: `section-${section.id}` } as CSSProperties}
-                    onDragOver={(event) => {
-                      if (!draggedSection) return;
-                      event.preventDefault();
-                      event.stopPropagation();
-                      event.dataTransfer.dropEffect = 'move';
-                      const bounds = event.currentTarget.getBoundingClientRect();
-                      const position =
-                        event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after';
-                      setSectionDropTarget({
-                        groupId: group.id,
-                        sectionId: section.id,
-                        position,
-                      });
-                    }}
-                    onDrop={(event) => {
-                      if (!draggedSection) return;
-                      event.preventDefault();
-                      event.stopPropagation();
-                      moveSection();
-                    }}
+                    style={{
+                      viewTransitionName: `section-${section.id}`,
+                      gridColumn: position ? `${position.x + 1} / span ${position.width}` : undefined,
+                      gridRow: position ? `${position.y + 1} / span ${position.height}` : undefined,
+                    } as CSSProperties}
                   >
                     <header className="section-header">
                       <div className="section-title-row">
@@ -962,36 +693,72 @@ function App() {
                           <button
                             type="button"
                             className="section-drag-handle"
-                            draggable
-                            aria-label={`拖动调整${section.title}的顺序`}
-                            title="拖动调整顺序"
-                            onDragStart={(event) => {
-                              event.dataTransfer.effectAllowed = 'move';
-                              event.dataTransfer.setData('text/plain', section.id);
-                              const sectionElement = event.currentTarget.closest('.shortcut-section');
-                              if (sectionElement) {
-                                event.dataTransfer.setDragImage(sectionElement, 24, 24);
-                              }
-                              setDraggedSection({ groupId: group.id, sectionId: section.id });
+                            aria-label={`拖动调整${section.title}的位置`}
+                            title="拖动卡片到网格位置"
+                            onPointerDown={(event) => {
+                              if (event.button !== 0) return;
+                              event.preventDefault();
+                              event.currentTarget.setPointerCapture(event.pointerId);
+                              const bounds = event.currentTarget.closest('.shortcut-section')?.getBoundingClientRect();
+                              cardDragRef.current = {
+                                source: { groupId: group.id, sectionId: section.id },
+                                startX: event.clientX,
+                                startY: event.clientY,
+                                offsetX: bounds ? event.clientX - bounds.left : 0,
+                                offsetY: bounds ? event.clientY - bounds.top : 0,
+                                target: null,
+                                active: false,
+                              };
                             }}
-                            onDragEnd={() => {
+                            onPointerMove={(event) => {
+                              const drag = cardDragRef.current;
+                              if (!drag) return;
+                              if (!drag.active && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 6) return;
+                              if (!drag.active) {
+                                drag.active = true;
+                                setDraggedSection(drag.source);
+                              }
+                              setCardDragPoint({ x: event.clientX, y: event.clientY });
+                              const rail = railRef.current;
+                              const placement = gridPositions[drag.source.sectionId];
+                              if (!rail || !placement) return;
+                              const bounds = rail.getBoundingClientRect();
+                              if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top) {
+                                drag.target = null;
+                                setCardDropCell(null);
+                                return;
+                              }
+                              const trackWidth = (bounds.width - (railColumns - 1) * 14) / railColumns;
+                              const maxY = Math.max(0, ...Object.values(gridPositions).map((item) => item.y + item.height)) + 20;
+                              drag.target = {
+                                x: Math.min(railColumns - placement.width, Math.max(0,
+                                  Math.round((event.clientX - bounds.left - drag.offsetX) / (trackWidth + 14)),
+                                )),
+                                y: Math.min(maxY, Math.max(0,
+                                  Math.round((event.clientY - bounds.top - drag.offsetY) / 20),
+                                )),
+                              };
+                              setCardDropCell(drag.target);
+                            }}
+                            onPointerUp={() => {
+                              const drag = cardDragRef.current;
+                              if (drag?.active && drag.target) moveSectionToCell(drag.source, drag.target);
+                              cardDragRef.current = null;
                               setDraggedSection(null);
-                              setSectionDropTarget(null);
+                              setCardDragPoint(null);
+                              setCardDropCell(null);
+                            }}
+                            onPointerCancel={() => {
+                              cardDragRef.current = null;
+                              setDraggedSection(null);
+                              setCardDragPoint(null);
+                              setCardDropCell(null);
                             }}
                           >
                             <GripVertical size={16} />
                           </button>
                         )}
-                        <button
-                          type="button"
-                          className="section-collapse-button"
-                          onClick={() => toggleSectionCollapsed(section.id)}
-                          aria-expanded={!isCollapsed}
-                          title={isCollapsed ? '展开小分组' : '折叠小分组'}
-                        >
-                          {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
-                          <h3>{section.title}</h3>
-                        </button>
+                        <h3>{section.title}</h3>
                       </div>
                       {isEditMode && <div className="section-actions">
                         <button
@@ -1005,7 +772,7 @@ function App() {
                             })
                           }
                           aria-label={`修改${section.title}的名称`}
-                          title="修改小分组名称"
+                          title="修改卡片名称"
                         >
                           <Pencil size={16} />
                         </button>
@@ -1016,11 +783,11 @@ function App() {
                               groupId: group.id,
                               sectionId: section.id,
                               title: section.title,
-                              columns: section.columns === 1 ? 1 : 2,
+                              columns: section.columns ?? 3,
                             })
                           }
                           aria-label={`设置${section.title}的布局`}
-                          title="小分组设置"
+                          title="卡片设置"
                         >
                           <Settings2 size={16} />
                         </button>
@@ -1049,16 +816,17 @@ function App() {
                             })
                           }
                           aria-label={`删除${section.title}`}
-                          title="删除小分组"
+                          title="删除卡片"
                         >
                           <X size={16} />
                         </button>
                       </div>}
                     </header>
 
-                    {!isCollapsed && (section.shortcuts.length > 0 ? (
+                    {section.shortcuts.length > 0 ? (
                       <div
-                        className={`shortcut-grid${section.columns === 1 ? ' is-single-column' : ''}${shortcutDropTarget?.groupId === group.id && shortcutDropTarget.sectionId === section.id && shortcutDropTarget.shortcutId === null ? ' is-drop-target' : ''}`}
+                        style={{ '--shortcut-columns': Math.min(5, Math.max(2, section.columns ?? 3)) } as CSSProperties}
+                        className={`shortcut-grid${shortcutDropTarget?.groupId === group.id && shortcutDropTarget.sectionId === section.id && shortcutDropTarget.shortcutId === null ? ' is-drop-target' : ''}`}
                         onDragOver={(event) => {
                           if (!draggedShortcut) return;
                           event.preventDefault();
@@ -1217,49 +985,32 @@ function App() {
                       >
                         <Plus size={17} /> 添加第一个快捷入口
                       </button> : <div className="empty-section is-readonly">暂无快捷入口</div>
-                    ))}
+                    )}
                   </section>
                   );
                 })}
-                {draggedSection && (
-                  <div
-                    className={`section-drop-zone${sectionDropTarget?.groupId === group.id && sectionDropTarget.sectionId === null ? ' is-active' : ''}`}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      event.dataTransfer.dropEffect = 'move';
-                      setSectionDropTarget({
-                        groupId: group.id,
-                        sectionId: null,
-                        position: 'after',
-                      });
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      moveSection();
-                    }}
-                  >
-                    移到此大分组
-                  </div>
-                )}
-              </div>
-            </article>
-            );
-          })}
+            </div>
+          ))}
+          {draggedSection && cardDropCell && gridPositions[draggedSection.sectionId] && (
+            <div
+              className="grid-drop-preview"
+              aria-hidden="true"
+              style={{
+                gridColumn: `${cardDropCell.x + 1} / span ${gridPositions[draggedSection.sectionId].width}`,
+                gridRow: `${cardDropCell.y + 1} / span ${gridPositions[draggedSection.sectionId].height}`,
+              }}
+            />
+          )}
         </div>
 
-        {hasHorizontalOverflow && (
-          <button
-            type="button"
-            className="rail-arrow rail-arrow-right"
-            onClick={() => scrollRail(1)}
-            aria-label="向右查看分组"
-          >
-            <ChevronRight size={22} />
-          </button>
-        )}
       </section>
+
+      {draggedSection && cardDragPoint && (
+        <div className="card-drag-preview" style={{ left: cardDragPoint.x, top: cardDragPoint.y }} aria-hidden="true">
+          <GripVertical size={17} />
+          <span>{groups.flatMap((group) => group.sections).find((section) => section.id === draggedSection.sectionId)?.title}</span>
+        </div>
+      )}
 
       {shortcutTooltip && (
         <div
@@ -1279,46 +1030,32 @@ function App() {
         onSelect={selectGlobalSearchItem}
       />
 
-      <TodoDialog
-        open={todoDialog !== null}
-        initialValue={todoDialog?.mode === 'edit' ? todoDialog.todo : undefined}
-        onClose={() => setTodoDialog(null)}
-        onSave={saveTodo}
-      />
-
-      <TodoDetailDialog todo={viewingTodo} onClose={() => setViewingTodo(null)} />
-
       <NameDialog
         open={nameDialog !== null}
         title={
           nameDialog?.kind === 'user'
             ? '设置姓名'
-            : nameDialog?.kind === 'edit-group'
-              ? '修改大分组名称'
             : nameDialog?.kind === 'edit-section'
-              ? '修改小分组名称'
+              ? '修改卡片名称'
             : nameDialog?.kind === 'section'
-              ? '新建小分组'
-              : '新建大分组'
+              ? '新建卡片'
+              : '新建卡片'
         }
-        label={nameDialog?.kind === 'user' ? '你的姓名' : '分组名称'}
+        label={nameDialog?.kind === 'user' ? '你的姓名' : '卡片名称'}
         placeholder={
           nameDialog?.kind === 'user'
             ? '请输入姓名'
-            : nameDialog?.kind === 'section' || nameDialog?.kind === 'edit-section'
-              ? '例如：常用工具'
-              : '例如：工作台'
+            : '例如：常用工具'
         }
         initialValue={
           nameDialog?.kind === 'user'
             ? userName
-            : nameDialog?.kind === 'edit-group' || nameDialog?.kind === 'edit-section'
+            : nameDialog?.kind === 'edit-section'
               ? nameDialog.title
               : ''
         }
         submitText={
           nameDialog?.kind === 'user' ||
-          nameDialog?.kind === 'edit-group' ||
           nameDialog?.kind === 'edit-section'
             ? '保存'
             : '创建'
@@ -1337,7 +1074,7 @@ function App() {
       <SectionSettingsDialog
         open={sectionSettings !== null}
         sectionTitle={sectionSettings?.title ?? ''}
-        initialColumns={sectionSettings?.columns ?? 2}
+        initialColumns={sectionSettings?.columns ?? 3}
         onClose={() => setSectionSettings(null)}
         onSave={saveSectionSettings}
       />

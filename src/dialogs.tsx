@@ -7,10 +7,7 @@ import {
   ChevronRight,
   Download,
   Folder,
-  Layers3,
   LayoutGrid,
-  ListTodo,
-  Rows3,
   Search,
   Upload,
   X,
@@ -25,7 +22,7 @@ import {
   useState,
 } from 'react';
 import type { BookmarkImportNode } from './bookmarks';
-import type { Shortcut, TodoItem } from './types';
+import type { Shortcut } from './types';
 
 const shortcutToneOptions = [
   '#1d4ed8',
@@ -181,149 +178,6 @@ export function ConfirmDialog({
   );
 }
 
-export function TodoDialog({
-  open,
-  initialValue,
-  onClose,
-  onSave,
-}: {
-  open: boolean;
-  initialValue?: TodoItem;
-  onClose: () => void;
-  onSave: (todo: Pick<TodoItem, 'title' | 'content' | 'color'>) => void;
-}) {
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [color, setColor] = useState('#1d4ed8');
-
-  useEffect(() => {
-    if (!open) return;
-    setTitle(initialValue?.title ?? '');
-    setContent(initialValue?.content ?? '');
-    setColor(normalizeTone(initialValue?.color));
-  }, [initialValue, open]);
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    if (!title.trim() || !content.trim()) return;
-    onSave({ title: title.trim(), content: content.trim(), color });
-  }
-
-  return (
-    <DialogFrame
-      open={open}
-      title={initialValue ? '修改待办' : '添加待办'}
-      description="填写待办信息，并设置用于区分的标记颜色。"
-      contentClassName="todo-dialog"
-      onOpenChange={(next) => !next && onClose()}
-    >
-      <form className="dialog-form" onSubmit={submit}>
-        <label>
-          待办标题
-          <input
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="例如：整理本周项目进度"
-            maxLength={80}
-            required
-            autoFocus
-          />
-        </label>
-        <label>
-          待办内容
-          <textarea
-            value={content}
-            onChange={(event) => setContent(event.target.value)}
-            placeholder="请输入具体内容…"
-            rows={5}
-            maxLength={1000}
-            required
-          />
-        </label>
-        <fieldset className="color-picker todo-color-picker">
-          <legend>标记颜色</legend>
-          <div className="color-picker-row">
-            <div className="color-swatches" aria-label="常用颜色">
-              {shortcutToneOptions.map((option) => (
-                <button
-                  type="button"
-                  key={option}
-                  className={color.toLowerCase() === option ? 'color-swatch is-selected' : 'color-swatch'}
-                  style={{ backgroundColor: option }}
-                  onClick={() => setColor(option)}
-                  aria-label={`选择颜色 ${option}`}
-                  aria-pressed={color.toLowerCase() === option}
-                  title={option}
-                />
-              ))}
-            </div>
-            <label className="custom-color-choice">
-              <input
-                type="color"
-                value={color}
-                onChange={(event) => setColor(event.target.value)}
-                aria-label="打开色彩盘选择自定义颜色"
-              />
-              <span>自定义</span>
-            </label>
-          </div>
-        </fieldset>
-        <div className="dialog-actions">
-          <button type="button" className="secondary-button" onClick={onClose}>
-            取消
-          </button>
-          <button
-            type="submit"
-            className="primary-button"
-            disabled={!title.trim() || !content.trim()}
-          >
-            {initialValue ? '保存修改' : '添加'}
-          </button>
-        </div>
-      </form>
-    </DialogFrame>
-  );
-}
-
-export function TodoDetailDialog({
-  todo,
-  onClose,
-}: {
-  todo: TodoItem | null;
-  onClose: () => void;
-}) {
-  return (
-    <DialogFrame
-      open={todo !== null}
-      title="待办详情"
-      contentClassName="todo-dialog"
-      onOpenChange={(next) => !next && onClose()}
-    >
-      {todo && (
-        <div className="todo-detail">
-          <section>
-            <span>待办标题</span>
-            <h3>{todo.title}</h3>
-          </section>
-          <section>
-            <span>待办内容</span>
-            <p>{todo.content || '暂无内容'}</p>
-          </section>
-          <div className="todo-detail-color">
-            <span className="todo-detail-color-dot" style={{ backgroundColor: todo.color }} />
-            标记颜色 {todo.color.toUpperCase()}
-          </div>
-          <div className="dialog-actions">
-            <button type="button" className="primary-button" onClick={onClose}>
-              关闭
-            </button>
-          </div>
-        </div>
-      )}
-    </DialogFrame>
-  );
-}
-
 export function ShortcutDialog({
   open,
   initialValue,
@@ -392,67 +246,29 @@ export function ShortcutDialog({
   );
 }
 
-export function SectionSettingsDialog({
-  open,
-  sectionTitle,
-  initialColumns,
-  onClose,
-  onSave,
-}: {
+export function SectionSettingsDialog({ open, sectionTitle, initialColumns, onClose, onSave }: {
   open: boolean;
   sectionTitle: string;
-  initialColumns: 1 | 2;
+  initialColumns: number;
   onClose: () => void;
-  onSave: (columns: 1 | 2) => void;
+  onSave: (columns: number) => void;
 }) {
-  const [columns, setColumns] = useState<1 | 2>(2);
-
-  useEffect(() => {
-    if (open) setColumns(initialColumns);
-  }, [initialColumns, open]);
-
+  const [columns, setColumns] = useState(3);
+  useEffect(() => { if (open) setColumns(Math.min(5, Math.max(2, initialColumns))); }, [initialColumns, open]);
   return (
-    <DialogFrame
-      open={open}
-      title="小分组设置"
-      description={`设置“${sectionTitle}”中快捷入口的展示方式。`}
-      contentClassName="section-settings-dialog"
-      onOpenChange={(next) => !next && onClose()}
-    >
+    <DialogFrame open={open} title="快捷入口布局" description={`设置“${sectionTitle}”每行显示的入口数量，行数不限。`} contentClassName="section-settings-dialog" onOpenChange={(next) => !next && onClose()}>
       <fieldset className="section-layout-options">
-        <legend>快捷入口布局</legend>
-        <button
-          type="button"
-          className={`section-layout-option${columns === 1 ? ' is-selected' : ''}`}
-          onClick={() => setColumns(1)}
-          aria-pressed={columns === 1}
-        >
-          <span className="section-layout-option-icon"><Rows3 size={23} /></span>
-          <span>
-            <strong>一行一个</strong>
-            <small>名称显示空间更充足，适合较长的入口名称</small>
-          </span>
-          <span className="section-layout-preview is-one"><i /><i /></span>
-        </button>
-        <button
-          type="button"
-          className={`section-layout-option${columns === 2 ? ' is-selected' : ''}`}
-          onClick={() => setColumns(2)}
-          aria-pressed={columns === 2}
-        >
-          <span className="section-layout-option-icon"><LayoutGrid size={23} /></span>
-          <span>
-            <strong>一行两个</strong>
-            <small>布局更紧凑，适合快捷入口较多的小分组</small>
-          </span>
-          <span className="section-layout-preview is-two"><i /><i /><i /><i /></span>
-        </button>
+        <legend>每行列数</legend>
+        {[2, 3, 4, 5].map((count) => (
+          <button type="button" key={count} className={`section-layout-option${columns === count ? ' is-selected' : ''}`} onClick={() => setColumns(count)} aria-pressed={columns === count}>
+            <span className="section-layout-option-icon"><LayoutGrid size={22} /></span>
+            <span><strong>{count} 列</strong><small>每行最多显示 {count} 个入口</small></span>
+          </button>
+        ))}
       </fieldset>
       <div className="dialog-actions">
         <button type="button" className="secondary-button" onClick={onClose}>取消</button>
-        <button type="button" className="primary-button" onClick={() => onSave(columns)}>
-          保存设置
-        </button>
+        <button type="button" className="primary-button" onClick={() => onSave(columns)}>保存设置</button>
       </div>
     </DialogFrame>
   );
@@ -589,7 +405,7 @@ export function BackupDialog({
           <AlertTriangle size={21} />
           <div>
             <strong>确定恢复“{pendingImportFile.name}”吗？</strong>
-            <p>当前姓名、待办、分组和快捷入口将被备份文件替换。</p>
+            <p>当前姓名、卡片和快捷入口将被备份文件替换。</p>
           </div>
           <div className="backup-confirm-actions">
             <button type="button" onClick={() => setPendingImportFile(null)} disabled={isImporting}>
@@ -848,7 +664,7 @@ export function BookmarkImportDialog({
 
 export interface GlobalSearchItem {
   id: string;
-  kind: 'shortcut' | 'todo' | 'group' | 'section';
+  kind: 'shortcut' | 'section';
   title: string;
   subtitle: string;
   searchText: string;
@@ -856,16 +672,12 @@ export interface GlobalSearchItem {
 
 const globalSearchIcons = {
   shortcut: Bookmark,
-  todo: ListTodo,
-  group: Layers3,
   section: Folder,
 };
 
 const globalSearchLabels = {
   shortcut: '快捷入口',
-  todo: '待办',
-  group: '大分组',
-  section: '小分组',
+  section: '卡片',
 };
 
 export function GlobalSearchDialog({
@@ -930,7 +742,7 @@ export function GlobalSearchDialog({
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索分组、快捷入口、网址或待办…"
+              placeholder="搜索卡片、快捷入口或网址…"
               autoFocus
             />
             <kbd>ESC</kbd>
