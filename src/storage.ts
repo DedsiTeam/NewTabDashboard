@@ -26,20 +26,34 @@ function isDashboardState(value: unknown): value is DashboardState {
 }
 
 function normalizeDashboardState(value: DashboardState): DashboardState {
+  const legacyPosition = (section: DashboardState['groups'][number]['sections'][number]) => {
+    const closest = Object.entries(section.layouts ?? {})
+      .filter(([key, position]) => /^\d+$/.test(key) && position)
+      .sort(([a], [b]) => Math.abs(Number(a) - 12) - Math.abs(Number(b) - 12))[0]?.[1];
+    return closest ?? section.layouts?.wide ?? section.layouts?.regular
+      ?? section.layouts?.narrow ?? section.layout;
+  };
+
+  const sections = value.groups.flatMap((group) => Array.isArray(group.sections) ? group.sections : [])
+    .map((section, index) => ({ section, index, position: legacyPosition(section) }))
+    .sort((a, b) => {
+      if (!a.position || !b.position) return a.position ? -1 : b.position ? 1 : a.index - b.index;
+      return a.position.y - b.position.y || a.position.x - b.position.x || a.index - b.index;
+    })
+    .map(({ section }) => ({
+      ...section,
+      columns: Math.min(5, Math.max(2, Number(section.columns) || 3)),
+      layout: undefined,
+      layouts: undefined,
+    }));
+
   return {
     userName: typeof value.userName === 'string' ? value.userName.trim() : '',
     // Keep every existing link while converting older two-level layouts to one card grid.
     groups: [{
       id: 'dashboard',
       title: '快捷入口',
-      sections: value.groups.flatMap((group) => Array.isArray(group.sections) ? group.sections : []).map((section) => ({
-        ...section,
-        columns: Math.min(5, Math.max(2, Number(section.columns) || 3)),
-        layout: Number.isInteger(section.layout?.x) && Number.isInteger(section.layout?.y)
-          && section.layout!.x >= 0 && section.layout!.y >= 0
-          ? { x: section.layout!.x, y: section.layout!.y }
-          : undefined,
-      })),
+      sections,
     }],
   };
 }

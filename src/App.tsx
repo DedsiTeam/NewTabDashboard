@@ -28,7 +28,6 @@ import {
   type BookmarkImportNode,
 } from './bookmarks';
 import { getFaviconCandidates } from './favicon';
-import { placeGridItems, type GridItem } from './gridLayout';
 import { shortcutIconMap } from './iconCatalog';
 import {
   downloadDashboardBackup,
@@ -38,15 +37,12 @@ import {
 } from './storage';
 import type { DashboardGroup, Shortcut } from './types';
 
+const CARD_GAP = 14;
+const GRID_COLUMN_MIN = 104;
+const GRID_ROW_HEIGHT = 1;
+
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function estimatedCardSpan(shortcutCount: number, columns: number) {
-  const rows = Math.ceil(shortcutCount / columns);
-  // Reserve enough space until ResizeObserver reads the card's real height.
-  const height = rows === 0 ? 140 : 80 + rows * 105;
-  return Math.ceil((height + 10) / 20);
 }
 
 type ViewTransitionDocument = Document & {
@@ -86,7 +82,7 @@ type ConfirmDialogState =
   | null;
 
 type DraggedSection = { groupId: string; sectionId: string };
-type GridCell = { x: number; y: number };
+type CardDropTarget = { sectionId: string; position: 'before' | 'after' };
 type DraggedShortcut = DraggedSection & { shortcutId: string };
 type ShortcutDropTarget = DraggedSection & {
   shortcutId: string | null;
@@ -141,10 +137,9 @@ function App() {
   const [bookmarkTree, setBookmarkTree] = useState<BookmarkImportNode[] | null>(null);
   const [draggedSection, setDraggedSection] = useState<DraggedSection | null>(null);
   const [cardDragPoint, setCardDragPoint] = useState<{ x: number; y: number } | null>(null);
-  const [cardDropCell, setCardDropCell] = useState<GridCell | null>(null);
-  const [railColumns, setRailColumns] = useState(12);
-  const [compactGrid, setCompactGrid] = useState(false);
-  const [measuredCardSpans, setMeasuredCardSpans] = useState<Record<string, { signature: string; span: number }>>({});
+  const [cardDropTarget, setCardDropTarget] = useState<CardDropTarget | null>(null);
+  const [railColumns, setRailColumns] = useState(1);
+  const [cardMeasurements, setCardMeasurements] = useState<Record<string, { signature: string; height: number }>>({});
   const railRef = useRef<HTMLDivElement>(null);
   const [draggedShortcut, setDraggedShortcut] = useState<DraggedShortcut | null>(null);
   const [shortcutDropTarget, setShortcutDropTarget] = useState<ShortcutDropTarget | null>(null);
@@ -153,9 +148,7 @@ function App() {
     source: DraggedSection;
     startX: number;
     startY: number;
-    offsetX: number;
-    offsetY: number;
-    target: GridCell | null;
+    target: CardDropTarget | null;
     active: boolean;
   } | null>(null);
 
@@ -187,35 +180,40 @@ function App() {
   useEffect(() => {
     const rail = railRef.current;
     if (!rail) return;
-    const observer = new ResizeObserver((entries) => {
-      const measured: Record<string, { signature: string; span: number }> = {};
-      for (const entry of entries) {
-        if (entry.target === rail) {
-          const columns = Math.max(1, Math.floor((rail.clientWidth + 14) / 94));
-          setRailColumns((current) => current === columns ? current : columns);
-          setCompactGrid((current) => current === (window.innerWidth <= 600) ? current : window.innerWidth <= 600);
-          continue;
-        }
-        const card = entry.target as HTMLElement;
+    const cards = [...rail.querySelectorAll<HTMLElement>('.shortcut-section')];
+
+    function measure() {
+      if (!rail) return;
+      const columns = Math.max(1, Math.floor((rail.clientWidth + CARD_GAP) / (GRID_COLUMN_MIN + CARD_GAP)));
+      setRailColumns((current) => current === columns ? current : columns);
+      const measurements: Record<string, { signature: string; height: number }> = {};
+      for (const card of cards) {
         const id = card.dataset.sectionId;
         const signature = card.dataset.layoutSignature;
         if (!id || !signature) continue;
-        const height = card.offsetHeight;
-        measured[id] = { signature, span: Math.max(1, Math.ceil((height + 10) / 20)) };
+        // Measure intrinsic contents; the outer card stretches to its rounded grid span.
+        const height = [...card.children].reduce((total, child) => {
+          const element = child as HTMLElement;
+          const style = getComputedStyle(element);
+          return total + element.offsetHeight + (parseFloat(style.marginTop) || 0)
+            + (parseFloat(style.marginBottom) || 0);
+        }, card.offsetHeight - card.clientHeight);
+        measurements[id] = { signature, height };
       }
-      if (Object.keys(measured).length) {
-        setMeasuredCardSpans((current) => {
-          const changed = Object.entries(measured).some(([id, value]) =>
-            current[id]?.signature !== value.signature || current[id]?.span !== value.span,
-          );
-          return changed ? { ...current, ...measured } : current;
-        });
-      }
-    });
+      setCardMeasurements((current) => Object.entries(measurements).some(([id, value]) =>
+        current[id]?.signature !== value.signature || current[id]?.height !== value.height,
+      ) ? { ...current, ...measurements } : current);
+    }
+
+    const observer = new ResizeObserver(measure);
     observer.observe(rail);
-    rail.querySelectorAll<HTMLElement>('.shortcut-section').forEach((card) => observer.observe(card));
+    cards.forEach((card) => {
+      observer.observe(card);
+      [...card.children].forEach((child) => observer.observe(child));
+    });
+    measure();
     return () => observer.disconnect();
-  }, [groups, railColumns, compactGrid]);
+  }, [groups, isEditMode, railColumns]);
 
   useEffect(() => {
     function handleGlobalSearchShortcut(event: KeyboardEvent) {
@@ -240,42 +238,6 @@ function App() {
     day: 'numeric',
     weekday: 'long',
   }).format(now);
-
-  const gridItems = useMemo<GridItem[]>(() => groups.flatMap((group) =>
-    group.sections.map((section) => {
-      const columns = Math.min(5, Math.max(2, section.columns ?? 3));
-      const linkColumns = compactGrid ? Math.min(columns, 3) : columns;
-      const signature = `${section.shortcuts.length}:${linkColumns}:${railColumns}`;
-      return {
-        id: section.id,
-        width: compactGrid ? railColumns : Math.min(railColumns, columns + 1),
-        height: measuredCardSpans[section.id]?.signature === signature
-          ? measuredCardSpans[section.id].span
-          : estimatedCardSpan(section.shortcuts.length, linkColumns),
-        x: section.layout?.x,
-        y: section.layout?.y,
-      };
-    }),
-  ), [groups, railColumns, compactGrid, measuredCardSpans]);
-  const gridPositions = useMemo(() => placeGridItems(gridItems, railColumns), [gridItems, railColumns]);
-
-  useEffect(() => {
-    if (!isHydrated || gridItems.some((item) => {
-      const section = groups.flatMap((group) => group.sections).find((candidate) => candidate.id === item.id);
-      if (!section) return true;
-      const columns = Math.min(5, Math.max(2, section.columns ?? 3));
-      const signature = `${section.shortcuts.length}:${compactGrid ? Math.min(columns, 3) : columns}:${railColumns}`;
-      return measuredCardSpans[item.id]?.signature !== signature;
-    })) return;
-    if (groups.every((group) => group.sections.every((section) => section.layout))) return;
-    setGroups((current) => current.map((group) => ({
-      ...group,
-      sections: group.sections.map((section) => section.layout ? section : {
-        ...section,
-        layout: { x: gridPositions[section.id].x, y: gridPositions[section.id].y },
-      }),
-    })));
-  }, [compactGrid, gridItems, gridPositions, groups, isHydrated, measuredCardSpans, railColumns]);
 
   const globalSearchItems = useMemo<GlobalSearchItem[]>(() => {
     const items: GlobalSearchItem[] = [];
@@ -323,20 +285,19 @@ function App() {
     });
   }
 
-  function moveSectionToCell(source: DraggedSection, target: GridCell) {
-    const arranged = placeGridItems(gridItems.map((item) => ({
-      ...item,
-      x: item.id === source.sectionId ? target.x : gridPositions[item.id]?.x,
-      y: item.id === source.sectionId ? target.y : gridPositions[item.id]?.y,
-    })), railColumns, source.sectionId);
+  function moveSection(source: DraggedSection, target: CardDropTarget) {
+    if (source.sectionId === target.sectionId) return;
     commitWithAnimation(() => {
-      setGroups((current) => current.map((group) => ({
-        ...group,
-        sections: group.sections.map((section) => {
-          const position = arranged[section.id];
-          return position ? { ...section, layout: { x: position.x, y: position.y } } : section;
-        }),
-      })));
+      setGroups((current) => {
+        const sections = current.flatMap((group) => group.sections);
+        const sourceIndex = sections.findIndex((section) => section.id === source.sectionId);
+        if (sourceIndex < 0) return current;
+        const [moving] = sections.splice(sourceIndex, 1);
+        const targetIndex = sections.findIndex((section) => section.id === target.sectionId);
+        if (targetIndex < 0) return current;
+        sections.splice(targetIndex + (target.position === 'after' ? 1 : 0), 0, moving);
+        return [{ ...current[0], sections }];
+      });
     });
   }
 
@@ -647,7 +608,11 @@ function App() {
         className="dashboard-region"
         aria-label="快捷入口卡片"
       >
-        <div className="group-rail" ref={railRef}>
+        <div className="group-rail" ref={railRef} style={{
+          '--card-gap': `${CARD_GAP}px`,
+          '--grid-column-min': `${GRID_COLUMN_MIN}px`,
+          '--grid-row-height': `${GRID_ROW_HEIGHT}px`,
+        } as CSSProperties}>
           {isHydrated && groups.every((group) => group.sections.length === 0) && (
             <div className="empty-dashboard">
               <div className="empty-dashboard-icon">
@@ -668,23 +633,29 @@ function App() {
             <div className="flat-card-container" key={group.id}>
                 {group.sections.map((section) => {
                   const columns = Math.min(5, Math.max(2, section.columns ?? 3));
-                  const linkColumns = compactGrid ? Math.min(columns, 3) : columns;
-                  const position = gridPositions[section.id];
+                  const signature = `${columns}:${railColumns}:${section.shortcuts.length}:${isEditMode}`;
+                  const measurement = cardMeasurements[section.id];
+                  const height = measurement?.signature === signature ? measurement.height
+                    : section.shortcuts.length ? 70 + Math.ceil(section.shortcuts.length / columns) * 89 : 140;
+                  const rowSpan = Math.max(1, Math.ceil((height + CARD_GAP) / (GRID_ROW_HEIGHT + CARD_GAP)));
                   const isDragging =
                     draggedSection?.groupId === group.id &&
                     draggedSection.sectionId === section.id;
+                  const dropPosition = cardDropTarget?.sectionId === section.id
+                    ? cardDropTarget.position : null;
 
                   return (
                   <section
                     id={`section-${section.id}`}
                     data-section-id={section.id}
-                    data-layout-signature={`${section.shortcuts.length}:${linkColumns}:${railColumns}`}
-                    className={`shortcut-section${isDragging ? ' is-dragging' : ''}`}
+                    data-layout-signature={signature}
+                    className={`shortcut-section${isDragging ? ' is-dragging' : ''}${dropPosition ? ` is-drop-${dropPosition}` : ''}`}
                     key={section.id}
                     style={{
                       viewTransitionName: `section-${section.id}`,
-                      gridColumn: position ? `${position.x + 1} / span ${position.width}` : undefined,
-                      gridRow: position ? `${position.y + 1} / span ${position.height}` : undefined,
+                      '--shortcut-columns': columns,
+                      gridColumn: `span ${Math.min(columns, railColumns)}`,
+                      gridRow: `span ${rowSpan}`,
                     } as CSSProperties}
                   >
                     <header className="section-header">
@@ -693,19 +664,16 @@ function App() {
                           <button
                             type="button"
                             className="section-drag-handle"
-                            aria-label={`拖动调整${section.title}的位置`}
-                            title="拖动卡片到网格位置"
+                            aria-label={`拖动调整${section.title}的顺序`}
+                            title="拖动卡片调整顺序"
                             onPointerDown={(event) => {
                               if (event.button !== 0) return;
                               event.preventDefault();
                               event.currentTarget.setPointerCapture(event.pointerId);
-                              const bounds = event.currentTarget.closest('.shortcut-section')?.getBoundingClientRect();
                               cardDragRef.current = {
                                 source: { groupId: group.id, sectionId: section.id },
                                 startX: event.clientX,
                                 startY: event.clientY,
-                                offsetX: bounds ? event.clientX - bounds.left : 0,
-                                offsetY: bounds ? event.clientY - bounds.top : 0,
                                 target: null,
                                 active: false,
                               };
@@ -720,39 +688,43 @@ function App() {
                               }
                               setCardDragPoint({ x: event.clientX, y: event.clientY });
                               const rail = railRef.current;
-                              const placement = gridPositions[drag.source.sectionId];
-                              if (!rail || !placement) return;
+                              if (!rail) return;
                               const bounds = rail.getBoundingClientRect();
-                              if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top) {
+                              if (event.clientX < bounds.left || event.clientX > bounds.right ||
+                                  event.clientY < bounds.top || event.clientY > bounds.bottom) {
                                 drag.target = null;
-                                setCardDropCell(null);
+                                setCardDropTarget(null);
                                 return;
                               }
-                              const trackWidth = (bounds.width - (railColumns - 1) * 14) / railColumns;
-                              const maxY = Math.max(0, ...Object.values(gridPositions).map((item) => item.y + item.height)) + 20;
-                              drag.target = {
-                                x: Math.min(railColumns - placement.width, Math.max(0,
-                                  Math.round((event.clientX - bounds.left - drag.offsetX) / (trackWidth + 14)),
-                                )),
-                                y: Math.min(maxY, Math.max(0,
-                                  Math.round((event.clientY - bounds.top - drag.offsetY) / 20),
-                                )),
-                              };
-                              setCardDropCell(drag.target);
+                              const candidates = [...rail.querySelectorAll<HTMLElement>('.shortcut-section')]
+                                .filter((card) => card.dataset.sectionId !== drag.source.sectionId);
+                              const nearest = candidates.map((card) => {
+                                const rect = card.getBoundingClientRect();
+                                const dx = Math.max(rect.left - event.clientX, 0, event.clientX - rect.right);
+                                const dy = Math.max(rect.top - event.clientY, 0, event.clientY - rect.bottom);
+                                return { card, rect, distance: dx * dx + dy * dy };
+                              }).sort((a, b) => a.distance - b.distance)[0];
+                              drag.target = nearest ? {
+                                sectionId: nearest.card.dataset.sectionId!,
+                                position: event.clientY < nearest.rect.top ? 'before'
+                                  : event.clientY > nearest.rect.bottom ? 'after'
+                                    : event.clientX < nearest.rect.left + nearest.rect.width / 2 ? 'before' : 'after',
+                              } : null;
+                              setCardDropTarget(drag.target);
                             }}
                             onPointerUp={() => {
                               const drag = cardDragRef.current;
-                              if (drag?.active && drag.target) moveSectionToCell(drag.source, drag.target);
+                              if (drag?.active && drag.target) moveSection(drag.source, drag.target);
                               cardDragRef.current = null;
                               setDraggedSection(null);
                               setCardDragPoint(null);
-                              setCardDropCell(null);
+                              setCardDropTarget(null);
                             }}
                             onPointerCancel={() => {
                               cardDragRef.current = null;
                               setDraggedSection(null);
                               setCardDragPoint(null);
-                              setCardDropCell(null);
+                              setCardDropTarget(null);
                             }}
                           >
                             <GripVertical size={16} />
@@ -991,16 +963,6 @@ function App() {
                 })}
             </div>
           ))}
-          {draggedSection && cardDropCell && gridPositions[draggedSection.sectionId] && (
-            <div
-              className="grid-drop-preview"
-              aria-hidden="true"
-              style={{
-                gridColumn: `${cardDropCell.x + 1} / span ${gridPositions[draggedSection.sectionId].width}`,
-                gridRow: `${cardDropCell.y + 1} / span ${gridPositions[draggedSection.sectionId].height}`,
-              }}
-            />
-          )}
         </div>
 
       </section>
