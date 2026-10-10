@@ -2262,16 +2262,16 @@ html, body, #root, .app-shell { max-width: 100%; overflow-x: clip; }
   margin: 0;
 }
 .simple-dashboard {
-  width: min(1440px, 100%);
+  width: min(1680px, 100%);
   margin: 0 auto;
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 480px);
-  column-gap: 20%;
+  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 480px);
+  column-gap: clamp(32px, 8vw, 160px);
   align-items: stretch;
   grid-template-rows: minmax(0, 1fr);
-  padding: clamp(48px, 6vh, 72px) clamp(8px, 4vw, 64px);
+  padding: 15dvh clamp(8px, 4vw, 64px) 16px;
 }
 .simple-start {
   min-width: 0;
@@ -2281,12 +2281,34 @@ html, body, #root, .app-shell { max-width: 100%; overflow-x: clip; }
   padding: 0 24px;
   overflow: hidden;
 }
-.simple-start .clock-block { flex-shrink: 0; align-items: center; flex-direction: row; justify-content: space-between; gap: clamp(16px, 3vw, 40px); margin-bottom: 32px; }
+.simple-start .clock-block { flex-shrink: 0; align-items: center; flex-direction: row; justify-content: space-between; gap: clamp(16px, 3vw, 40px); margin-bottom: clamp(36px, 4vh, 48px); }
 .simple-start .clock-block > strong { font-size: 48px; line-height: 1; letter-spacing: -2px; }
 .simple-start .clock-details { min-width: 0; gap: 8px; white-space: normal; overflow-wrap: anywhere; }
 .simple-start .clock-details p { font-size: 15px; font-weight: 500; }
+.simple-shortcut-search {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin-bottom: clamp(36px, 4vh, 48px);
+  padding: 0 12px;
+  border: 1px solid rgba(255,255,255,.25);
+  border-radius: 10px;
+  color: rgba(255,255,255,.8);
+  background: rgba(15,23,42,.2);
+  backdrop-filter: blur(12px);
+}
+.simple-shortcut-search:focus-within { border-color: #c1c9f1; box-shadow: 0 0 0 2px rgba(193,201,241,.15); }
+.simple-shortcut-search input { width: 100%; min-width: 0; padding: 10px 0; border: 0; outline: 0; color: #fff; background: transparent; font-size: 14px; }
+.simple-shortcut-search input::placeholder { color: rgba(255,255,255,.7); }
+.simple-shortcut-search input::-webkit-search-cancel-button { display: none; }
+.simple-shortcut-search button { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; color: inherit; background: transparent; cursor: pointer; }
+.simple-shortcut-search button:hover { color: #fff; background: rgba(255,255,255,.12); }
+.simple-search-empty { margin: 0; padding: 24px 12px; text-align: center; color: rgba(255,255,255,.8); font-size: 14px; text-shadow: 0 1px 4px rgba(0,0,0,.5); }
 .simple-shortcuts {
   min-height: 0;
+  max-height: 580px;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior-y: contain;
@@ -2298,7 +2320,7 @@ html, body, #root, .app-shell { max-width: 100%; overflow-x: clip; }
   gap: 24px;
 }
 .simple-link-group h2 { margin: 0 0 10px; color: rgba(255,255,255,.8); font-size: 12px; font-weight: 600; text-shadow: 0 1px 4px rgba(0,0,0,.5); }
-.simple-link-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 12px; }
+.simple-link-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px 12px; }
 .simple-link { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 4px; border: 1px solid transparent; border-radius: 10px; color: #fff; text-decoration: none; transition: background 160ms ease, transform 160ms ease; }
 .simple-link:hover, .simple-link:focus-visible { background: rgba(255,255,255,.15); border-color: rgba(255,255,255,.25); transform: translateY(-2px); }
 .simple-link .shortcut-icon { width: 42px; height: 42px; }
@@ -2337,12 +2359,14 @@ html, body, #root, .app-shell { max-width: 100%; overflow-x: clip; }
 .todo-edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .todo-edit-actions button { display: flex; align-items: center; gap: 4px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.18); border-radius: 6px; background: rgba(255,255,255,.08); color: #fff; font-size: 12px; }
 @media (max-width: 900px) {
-  .simple-dashboard { column-gap: 20%; padding: 48px 8px; grid-template-columns: minmax(0, 1fr) minmax(300px, .9fr); }
+  .simple-dashboard { column-gap: 24px; padding: 15dvh 8px 16px; grid-template-columns: minmax(0, 1fr) minmax(300px, .9fr); }
+  .simple-link-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 @media (max-width: 680px) {
-  .simple-dashboard { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 48px 0; }
+  .simple-dashboard { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 15dvh 0 16px; }
   .simple-start { padding: 0 16px; }
   .simple-start .clock-block > strong { font-size: 40px; }
+  .simple-start .clock-block, .simple-shortcut-search { margin-bottom: 24px; }
   .todo-create { margin: 0 16px 8px; padding: 8px; }
   .todo-create-footer { margin-top: 4px; }
 }

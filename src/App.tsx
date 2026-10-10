@@ -123,6 +123,7 @@ function App() {
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [groups, setGroups] = useState<DashboardGroup[]>([]);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [shortcutSearch, setShortcutSearch] = useState('');
   const [actionsExpanded, setActionsExpanded] = useState(false);
   const [actionsWidth, setActionsWidth] = useState(0);
   const actionsRef = useRef<HTMLDivElement>(null);
@@ -269,6 +270,18 @@ function App() {
     }
     return items;
   }, [groups]);
+
+  const shortcutSearchQuery = shortcutSearch.trim().toLocaleLowerCase();
+  const visibleShortcutSections = useMemo(() => groups.flatMap((group) => group.sections)
+    .map((section) => ({
+      ...section,
+      shortcuts: !shortcutSearchQuery || section.title.toLocaleLowerCase().includes(shortcutSearchQuery)
+        ? section.shortcuts
+        : section.shortcuts.filter((shortcut) =>
+          `${shortcut.title} ${shortcut.url}`.toLocaleLowerCase().includes(shortcutSearchQuery)),
+    }))
+    .filter((section) => !shortcutSearchQuery || section.shortcuts.length > 0),
+  [groups, shortcutSearchQuery]);
 
   function selectGlobalSearchItem(item: GlobalSearchItem) {
     if (item.kind === 'shortcut') {
@@ -671,8 +684,21 @@ function App() {
       {simpleView ? <div className="simple-dashboard">
         <section className="simple-start" aria-label="时间与快捷入口">
           {clockBlock}
-          <div className="simple-shortcuts" onScroll={() => setShortcutTooltip(null)}>
-            {groups.flatMap((group) => group.sections).map((section) => <section className="simple-link-group" id={`section-${section.id}`} key={section.id}>
+          <div className="simple-shortcut-search" role="search" aria-label="搜索快捷入口">
+            <Search size={18} aria-hidden="true" />
+            <input
+              type="search"
+              aria-label="搜索快捷入口"
+              aria-controls="simple-shortcut-results"
+              placeholder="搜索快捷入口…"
+              value={shortcutSearch}
+              onChange={(event) => { setShortcutSearch(event.target.value); setShortcutTooltip(null); }}
+              onKeyDown={(event) => { if (event.key === 'Escape') setShortcutSearch(''); }}
+            />
+            {shortcutSearch && <button type="button" aria-label="清空搜索" onClick={() => setShortcutSearch('')}><X size={16} /></button>}
+          </div>
+          <div id="simple-shortcut-results" className="simple-shortcuts" onScroll={() => setShortcutTooltip(null)}>
+            {visibleShortcutSections.map((section) => <section className="simple-link-group" id={`section-${section.id}`} key={section.id}>
               <h2>{section.title}</h2>
               <div className="simple-link-grid">{section.shortcuts.map((shortcut) => <a className="simple-link" href={shortcut.url} key={shortcut.id} target="_blank" rel="noreferrer"
                 aria-label={`${shortcut.title}，地址：${shortcut.url}`}
@@ -684,7 +710,8 @@ function App() {
                 <span className="shortcut-icon"><ShortcutVisual shortcut={shortcut} /></span><span className="simple-link-title">{shortcut.title}</span>
               </a>)}</div>
             </section>)}
-            {groups.every((group) => group.sections.length === 0) && <button className="simple-first-card" type="button" onClick={() => setNameDialog({ kind: 'section', groupId: 'dashboard' })}><Plus size={18} />添加第一张快捷入口卡片</button>}
+            {shortcutSearchQuery && visibleShortcutSections.length === 0 && <p className="simple-search-empty" role="status">未找到匹配的快捷入口</p>}
+            {!shortcutSearchQuery && groups.every((group) => group.sections.length === 0) && <button className="simple-first-card" type="button" onClick={() => setNameDialog({ kind: 'section', groupId: 'dashboard' })}><Plus size={18} />添加第一张快捷入口卡片</button>}
           </div>
         </section>
         <TodoPanel items={todos} onChange={setTodos} disabled={!isHydrated} />
