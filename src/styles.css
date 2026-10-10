@@ -526,7 +526,7 @@ button {
   padding: 0;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--line), transparent 18%);
-  border-radius: 1rem;
+  border-radius: 10px;
   background: color-mix(in srgb, var(--card), transparent 5%);
   transition: border-color 140ms ease, opacity 140ms ease;
 }
@@ -546,7 +546,7 @@ button {
   border-bottom: 1px solid color-mix(in srgb, var(--line), transparent 20%);
 }
 
-.section-header h3 {
+.section-header h2 {
   margin: 0;
   overflow: hidden;
   color: var(--muted);
@@ -757,19 +757,37 @@ button {
 .shortcut-tooltip {
   position: fixed;
   z-index: 50;
+  width: max-content;
   max-width: min(440px, calc(100vw - 32px));
-  padding: 7px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 10px;
   color: #fff;
-  background: #172554;
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.22);
+  background: rgba(30, 35, 43, 0.48);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
   pointer-events: none;
   transform: translateX(-50%);
 }
+
+.shortcut-tooltip-title,
+.shortcut-tooltip-url {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.shortcut-tooltip-title { font-size: 13px; font-weight: 600; }
+.shortcut-tooltip-url { color: rgba(255, 255, 255, .78); }
 
 .shortcut-tooltip.is-above {
   transform: translate(-50%, -100%);
@@ -986,105 +1004,6 @@ button {
 
 .dialog-content.shortcut-dialog {
   width: min(640px, calc(100vw - 40px));
-}
-
-.dialog-content.section-settings-dialog {
-  width: min(560px, calc(100vw - 40px));
-}
-
-.section-layout-options {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.section-layout-options legend {
-  margin-bottom: 10px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.section-layout-option {
-  width: 100%;
-  min-height: 82px;
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 76px;
-  align-items: center;
-  gap: 13px;
-  padding: 13px;
-  border: 1px solid var(--line);
-  border-radius: 13px;
-  color: var(--text);
-  background: var(--tile);
-  text-align: left;
-  cursor: pointer;
-  transition: 150ms ease;
-}
-
-.section-layout-option:hover {
-  border-color: color-mix(in srgb, var(--brand), white 55%);
-}
-
-.section-layout-option.is-selected {
-  border-color: var(--brand);
-  background: color-mix(in srgb, var(--brand-soft), white 54%);
-  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.08);
-}
-
-.section-layout-option-icon {
-  width: 44px;
-  height: 44px;
-  display: grid;
-  place-items: center;
-  border-radius: 11px;
-  color: var(--brand);
-  background: var(--brand-soft);
-}
-
-.section-layout-option > span:nth-child(2) {
-  min-width: 0;
-  display: grid;
-  gap: 5px;
-}
-
-.section-layout-option strong,
-.section-layout-option small {
-  display: block;
-}
-
-.section-layout-option strong {
-  font-size: 15px;
-}
-
-.section-layout-option small {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.section-layout-preview {
-  width: 76px;
-  display: grid;
-  gap: 5px;
-}
-
-.section-layout-preview.is-one {
-  grid-template-columns: 1fr;
-}
-
-.section-layout-preview.is-two {
-  grid-template-columns: repeat(2, 1fr);
-}
-
-.section-layout-preview i {
-  height: 15px;
-  display: block;
-  border: 1px solid color-mix(in srgb, var(--brand), white 52%);
-  border-radius: 4px;
-  background: white;
 }
 
 .dialog-content.bookmark-import-dialog {
@@ -2028,14 +1947,14 @@ html, body, #root { min-height: 100%; height: auto; overflow: auto; }
   min-width: 0;
   margin: 0;
   border: 1px solid rgba(255,255,255,.06);
-  border-radius: 1rem;
+  border-radius: 10px;
   background: rgba(255,255,255,.035);
   box-shadow: none;
 }
 .section-header { min-height: 48px; background: transparent; border-bottom-color: rgba(255,255,255,.045); }
-.section-header h3 { color: #e7ebf4; font-weight: 600; }
+.section-header h2 { color: #e7ebf4; font-weight: 600; }
 .shortcut-grid {
-  grid-template-columns: repeat(var(--shortcut-columns, 3), minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   padding: 12px;
   background: transparent;
@@ -2104,12 +2023,12 @@ html, body, #root { min-height: 100%; height: auto; overflow: auto; }
   width: 100%;
   max-width: 380px;
   margin: 0;
-  border-radius: 1rem;
+  border-radius: 10px;
   background: linear-gradient(155deg, rgba(43, 50, 64, .98), rgba(30, 38, 52, .98));
   box-shadow: 0 14px 34px rgba(8, 12, 23, .2);
 }
 .section-header { padding-left: 10px; padding-right: 8px; }
-.section-header h3 { font-size: 14px; }
+.section-header h2 { font-size: 14px; }
 .shortcut-grid { gap: 7px; padding: 10px; }
 .shortcut-tile { min-height: 82px; padding: 10px 4px; }
 .empty-dashboard { justify-self: center; }
@@ -2130,17 +2049,18 @@ html, body, #root { min-height: 100%; height: auto; overflow: auto; }
 
 .section-drag-handle { touch-action: none; user-select: none; }
 
-/* Dense placement lets later cards fill available spaces below shorter cards. */
+/* Explicit grid coordinates allow manual placement in gaps. */
 .group-rail {
   position: relative;
   min-height: calc(100vh - 165px);
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--grid-column-min, 104px), 1fr));
-  grid-auto-rows: var(--grid-row-height, 1px);
-  grid-auto-flow: row dense;
-  align-items: stretch;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
+  grid-auto-rows: 1px;
+  grid-auto-flow: row;
+  align-items: start;
   align-content: start;
-  gap: var(--card-gap, 14px);
+  column-gap: 14px;
+  row-gap: 0;
   overflow-x: clip;
 }
 .group-rail:has(> .empty-dashboard) {
@@ -2151,25 +2071,20 @@ html, body, #root { min-height: 100%; height: auto; overflow: auto; }
 .shortcut-section {
   width: 100%;
   max-width: 100%;
-  align-self: stretch;
+  align-self: start;
   transition: transform 180ms cubic-bezier(.2,.8,.2,1), opacity 180ms ease, box-shadow 180ms ease;
 }
 .shortcut-section.is-dragging { opacity: .35; transform: scale(.98); }
-.shortcut-section.is-drop-before::before,
-.shortcut-section.is-drop-after::before {
-  position: absolute;
-  z-index: 3;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
-  border-radius: 3px;
-  background: #fff;
-  box-shadow: 0 0 8px rgba(0, 0, 0, .45);
-  content: '';
+.card-position-placeholder {
+  z-index: 1;
+  border: 2px dashed #c1c9f1;
+  border-radius: 10px;
+  background: rgba(193, 201, 241, .16);
   pointer-events: none;
 }
-.shortcut-section.is-drop-before::before { left: 1px; }
-.shortcut-section.is-drop-after::before { right: 1px; }
+.group-rail.is-position-editing {
+  padding-bottom: 160px;
+}
 .card-drag-preview {
   position: fixed;
   z-index: 100;
@@ -2199,13 +2114,10 @@ html, body, #root { min-height: 100%; height: auto; overflow: auto; }
   ::view-transition-group(*) { animation-duration: 0.01ms; }
 }
 
-/* Link columns determine card width; the outer canvas keeps a 1rem inset. */
+/* Keep a 1rem canvas inset; cards fill their responsive grid columns. */
 .app-shell { padding: 1rem; }
 .shortcut-section {
   max-width: 100%;
-}
-@media (max-width: 600px) {
-  .shortcut-grid { grid-template-columns: repeat(min(var(--shortcut-columns, 3), 3), minmax(0, 1fr)); }
 }
 
 /* Keep the random photo visible and shade only the clock side for contrast. */
@@ -2213,12 +2125,28 @@ html, body, #root { min-height: 100%; height: auto; overflow: auto; }
   background-color: #dfe7ef;
   background-image:
     linear-gradient(90deg, rgba(15, 23, 42, .48), rgba(15, 23, 42, .08) 65%),
-    url('https://picsum.photos/1920/1080');
+    var(--wallpaper-image, url('https://picsum.photos/1920/1080'));
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
 }
 .topbar { min-height: 0; margin-bottom: 1rem; align-items: center; }
+.wallpaper-spinner { animation: wallpaper-spin 1s linear infinite; }
+.wallpaper-error {
+  position: fixed;
+  top: 72px;
+  right: 1rem;
+  z-index: 10;
+  padding: 10px 14px;
+  border-radius: 10px;
+  color: #fff;
+  background: rgba(30, 38, 52, .95);
+  font-size: 13px;
+}
+@keyframes wallpaper-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .wallpaper-spinner { animation: none; }
+}
 .clock-block {
   flex-direction: row;
   align-items: center;
@@ -2247,12 +2175,12 @@ html, body, #root { min-height: 100%; height: auto; overflow: auto; }
 }
 .shortcut-section {
   border-color: rgba(255, 255, 255, .22);
-  border-radius: 1rem;
+  border-radius: 10px;
   background: rgba(0, 0, 0, .3);
   box-shadow: 0 12px 30px rgba(40, 54, 73, .15);
 }
 .section-header { border-bottom-color: rgba(255, 255, 255, .1); }
-.section-header h3 { color: #fff; }
+.section-header h2 { color: #fff; }
 .shortcut-tile {
   border-color: transparent;
   background: transparent;

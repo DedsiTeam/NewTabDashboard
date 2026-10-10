@@ -7,7 +7,6 @@ import {
   ChevronRight,
   Download,
   Folder,
-  LayoutGrid,
   Search,
   Upload,
   X,
@@ -242,34 +241,6 @@ export function ShortcutDialog({
           </button>
         </div>
       </form>
-    </DialogFrame>
-  );
-}
-
-export function SectionSettingsDialog({ open, sectionTitle, initialColumns, onClose, onSave }: {
-  open: boolean;
-  sectionTitle: string;
-  initialColumns: number;
-  onClose: () => void;
-  onSave: (columns: number) => void;
-}) {
-  const [columns, setColumns] = useState(3);
-  useEffect(() => { if (open) setColumns(Math.min(5, Math.max(2, initialColumns))); }, [initialColumns, open]);
-  return (
-    <DialogFrame open={open} title="快捷入口布局" description={`设置“${sectionTitle}”每行显示的入口数量，行数不限。`} contentClassName="section-settings-dialog" onOpenChange={(next) => !next && onClose()}>
-      <fieldset className="section-layout-options">
-        <legend>每行列数</legend>
-        {[2, 3, 4, 5].map((count) => (
-          <button type="button" key={count} className={`section-layout-option${columns === count ? ' is-selected' : ''}`} onClick={() => setColumns(count)} aria-pressed={columns === count}>
-            <span className="section-layout-option-icon"><LayoutGrid size={22} /></span>
-            <span><strong>{count} 列</strong><small>每行最多显示 {count} 个入口</small></span>
-          </button>
-        ))}
-      </fieldset>
-      <div className="dialog-actions">
-        <button type="button" className="secondary-button" onClick={onClose}>取消</button>
-        <button type="button" className="primary-button" onClick={() => onSave(columns)}>保存设置</button>
-      </div>
     </DialogFrame>
   );
 }

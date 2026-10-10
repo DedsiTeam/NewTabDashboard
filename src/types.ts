@@ -81,7 +81,8 @@ export interface ShortcutSection {
   id: string;
   title: string;
   shortcuts: Shortcut[];
-  columns?: number;
+  gridPositionUnit?: number;
+  gridPositions?: Record<string, { x: number; y: number } | undefined>;
   // Legacy free-layout positions are only read when migrating older saved data.
   layouts?: Record<string, { x: number; y: number; columns: number } | undefined>;
   layout?: { x: number; y: number };

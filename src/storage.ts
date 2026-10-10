@@ -1,4 +1,5 @@
 import type { DashboardState } from './types';
+import { validPosition } from './cardLayout';
 
 const STORAGE_KEY = 'dashboardState';
 const DEV_STORAGE_KEY = 'new-tab-dashboard:storage:v1';
@@ -42,7 +43,11 @@ function normalizeDashboardState(value: DashboardState): DashboardState {
     })
     .map(({ section }) => ({
       ...section,
-      columns: Math.min(5, Math.max(2, Number(section.columns) || 3)),
+      gridPositionUnit: 1,
+      gridPositions: Object.fromEntries(Object.entries(section.gridPositions ?? {})
+        .filter(([key, position]) => /^[1-9]\d*$/.test(key) && validPosition(position))
+        .map(([key, position]) => [key, { x: position!.x, y: position!.y * (section.gridPositionUnit === 1 ? 1 : 22) }])),
+      columns: undefined,
       layout: undefined,
       layouts: undefined,
     }));

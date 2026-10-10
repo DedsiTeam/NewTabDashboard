@@ -2,6 +2,8 @@ import {
   Check,
   Database,
   GripVertical,
+  ImagePlus,
+  LoaderCircle,
   Pencil,
   Plus,
   Search,
@@ -19,7 +21,6 @@ import {
   GlobalSearchDialog,
   type GlobalSearchItem,
   NameDialog,
-  SectionSettingsDialog,
   ShortcutDialog,
 } from './dialogs';
 import {
@@ -36,10 +37,7 @@ import {
   saveDashboardState,
 } from './storage';
 import type { DashboardGroup, Shortcut } from './types';
-
-const CARD_GAP = 14;
-const GRID_COLUMN_MIN = 104;
-const GRID_ROW_HEIGHT = 1;
+import { buildCardLayout, moveLayoutCard, snapCardPosition, CARD_GAP, CARD_ROW_HEIGHT, CARD_ROW_STEP, type CardPosition } from './cardLayout';
 
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -63,13 +61,6 @@ type ShortcutDialogTarget =
   | { mode: 'add'; groupId: string; sectionId: string }
   | { mode: 'edit'; groupId: string; sectionId: string; shortcut: Shortcut };
 
-type SectionSettingsTarget = {
-  groupId: string;
-  sectionId: string;
-  title: string;
-  columns: number;
-};
-
 type NameDialogState =
   | { kind: 'section'; groupId: string }
   | { kind: 'edit-section'; groupId: string; sectionId: string; title: string }
@@ -82,7 +73,7 @@ type ConfirmDialogState =
   | null;
 
 type DraggedSection = { groupId: string; sectionId: string };
-type CardDropTarget = { sectionId: string; position: 'before' | 'after' };
+type CardDropTarget = CardPosition;
 type DraggedShortcut = DraggedSection & { shortcutId: string };
 type ShortcutDropTarget = DraggedSection & {
   shortcutId: string | null;
@@ -90,6 +81,7 @@ type ShortcutDropTarget = DraggedSection & {
 };
 type ShortcutTooltip = {
   shortcutId: string;
+  title: string;
   url: string;
   left: number;
   top: number;
@@ -125,12 +117,14 @@ function ShortcutVisual({ shortcut }: { shortcut: Shortcut }) {
 function App() {
   const [groups, setGroups] = useState<DashboardGroup[]>([]);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [wallpaperUrl, setWallpaperUrl] = useState('https://picsum.photos/1920/1080');
+  const [wallpaperLoading, setWallpaperLoading] = useState(false);
+  const [wallpaperError, setWallpaperError] = useState('');
   const [isEditMode, setIsEditMode] = useState(false);
   const [userName, setUserName] = useState('');
   const [isHydrated, setIsHydrated] = useState(false);
   const [now, setNow] = useState(new Date());
   const [shortcutDialog, setShortcutDialog] = useState<ShortcutDialogTarget | null>(null);
-  const [sectionSettings, setSectionSettings] = useState<SectionSettingsTarget | null>(null);
   const [nameDialog, setNameDialog] = useState<NameDialogState>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
@@ -138,9 +132,18 @@ function App() {
   const [draggedSection, setDraggedSection] = useState<DraggedSection | null>(null);
   const [cardDragPoint, setCardDragPoint] = useState<{ x: number; y: number } | null>(null);
   const [cardDropTarget, setCardDropTarget] = useState<CardDropTarget | null>(null);
-  const [railColumns, setRailColumns] = useState(1);
-  const [cardMeasurements, setCardMeasurements] = useState<Record<string, { signature: string; height: number }>>({});
   const railRef = useRef<HTMLDivElement>(null);
+  const [railColumns, setRailColumns] = useState(1);
+  const [cardHeights, setCardHeights] = useState<Record<string, number>>({});
+  const sections = groups.flatMap((group) => group.sections);
+  const cardLayout = buildCardLayout(sections.map((section) => ({
+    id: section.id,
+    rows: Math.max(1, Math.ceil(((cardHeights[section.id] ?? (section.shortcuts.length
+      ? 48 + 20 + Math.ceil(section.shortcuts.length / 4) * 89 : 140)) + CARD_GAP) / CARD_ROW_STEP)),
+    position: section.gridPositions?.[railColumns],
+  })), railColumns);
+  const previewLayout = draggedSection && cardDropTarget
+    ? moveLayoutCard(cardLayout, draggedSection.sectionId, cardDropTarget) : cardLayout;
   const [draggedShortcut, setDraggedShortcut] = useState<DraggedShortcut | null>(null);
   const [shortcutDropTarget, setShortcutDropTarget] = useState<ShortcutDropTarget | null>(null);
   const [shortcutTooltip, setShortcutTooltip] = useState<ShortcutTooltip | null>(null);
@@ -150,6 +153,7 @@ function App() {
     startY: number;
     target: CardDropTarget | null;
     active: boolean;
+    offsetY: number;
   } | null>(null);
 
   useEffect(() => {
@@ -180,40 +184,22 @@ function App() {
   useEffect(() => {
     const rail = railRef.current;
     if (!rail) return;
-    const cards = [...rail.querySelectorAll<HTMLElement>('.shortcut-section')];
-
-    function measure() {
-      if (!rail) return;
-      const columns = Math.max(1, Math.floor((rail.clientWidth + CARD_GAP) / (GRID_COLUMN_MIN + CARD_GAP)));
-      setRailColumns((current) => current === columns ? current : columns);
-      const measurements: Record<string, { signature: string; height: number }> = {};
-      for (const card of cards) {
-        const id = card.dataset.sectionId;
-        const signature = card.dataset.layoutSignature;
-        if (!id || !signature) continue;
-        // Measure intrinsic contents; the outer card stretches to its rounded grid span.
-        const height = [...card.children].reduce((total, child) => {
-          const element = child as HTMLElement;
-          const style = getComputedStyle(element);
-          return total + element.offsetHeight + (parseFloat(style.marginTop) || 0)
-            + (parseFloat(style.marginBottom) || 0);
-        }, card.offsetHeight - card.clientHeight);
-        measurements[id] = { signature, height };
-      }
-      setCardMeasurements((current) => Object.entries(measurements).some(([id, value]) =>
-        current[id]?.signature !== value.signature || current[id]?.height !== value.height,
-      ) ? { ...current, ...measurements } : current);
-    }
-
+    const measure = () => {
+      const width = rail.clientWidth;
+      setRailColumns(Math.max(1, Math.floor((width + CARD_GAP) / (380 + CARD_GAP))));
+      const heights: Record<string, number> = {};
+      rail.querySelectorAll<HTMLElement>('.shortcut-section').forEach((card) => {
+        heights[card.dataset.sectionId!] = card.getBoundingClientRect().height;
+      });
+      setCardHeights((current) => Object.entries(heights).some(([id, height]) =>
+        Math.abs((current[id] ?? 0) - height) > 1) ? heights : current);
+    };
     const observer = new ResizeObserver(measure);
     observer.observe(rail);
-    cards.forEach((card) => {
-      observer.observe(card);
-      [...card.children].forEach((child) => observer.observe(child));
-    });
+    rail.querySelectorAll('.shortcut-section').forEach((card) => observer.observe(card));
     measure();
     return () => observer.disconnect();
-  }, [groups, isEditMode, railColumns]);
+  }, [groups, isEditMode]);
 
   useEffect(() => {
     function handleGlobalSearchShortcut(event: KeyboardEvent) {
@@ -286,18 +272,17 @@ function App() {
   }
 
   function moveSection(source: DraggedSection, target: CardDropTarget) {
-    if (source.sectionId === target.sectionId) return;
+    const nextLayout = moveLayoutCard(cardLayout, source.sectionId, target);
     commitWithAnimation(() => {
-      setGroups((current) => {
-        const sections = current.flatMap((group) => group.sections);
-        const sourceIndex = sections.findIndex((section) => section.id === source.sectionId);
-        if (sourceIndex < 0) return current;
-        const [moving] = sections.splice(sourceIndex, 1);
-        const targetIndex = sections.findIndex((section) => section.id === target.sectionId);
-        if (targetIndex < 0) return current;
-        sections.splice(targetIndex + (target.position === 'after' ? 1 : 0), 0, moving);
-        return [{ ...current[0], sections }];
-      });
+      setGroups((current) => current.map((group) => ({
+        ...group,
+        sections: group.sections.map((section) => {
+          const position = nextLayout.find((card) => card.id === section.id);
+          return position ? { ...section, gridPositionUnit: 1, gridPositions: {
+            ...section.gridPositions, [railColumns]: { x: position.x, y: position.y },
+          } } : section;
+        }),
+      })));
     });
   }
 
@@ -364,13 +349,15 @@ function App() {
     setShortcutDropTarget(null);
   }
 
-  function showShortcutTooltip(element: HTMLElement, shortcutId: string, url: string) {
+  function showShortcutTooltip(element: HTMLElement, shortcutId: string, title: string, url: string) {
     const bounds = element.getBoundingClientRect();
-    const above = bounds.bottom + 58 > window.innerHeight;
+    const above = bounds.bottom + 76 > window.innerHeight;
+    const halfWidth = Math.min(440, window.innerWidth - 32) / 2;
     setShortcutTooltip({
       shortcutId,
+      title,
       url,
-      left: Math.min(Math.max(bounds.left + bounds.width / 2, 170), window.innerWidth - 170),
+      left: Math.min(Math.max(bounds.left + bounds.width / 2, halfWidth + 16), window.innerWidth - halfWidth - 16),
       top: above ? bounds.top - 8 : bounds.bottom + 8,
       above,
     });
@@ -486,24 +473,6 @@ function App() {
     setShortcutDialog(null);
   }
 
-  function saveSectionSettings(columns: number) {
-    if (!sectionSettings) return;
-    const safeColumns = Math.min(5, Math.max(2, columns));
-    setGroups((current) =>
-      current.map((group) =>
-        group.id === sectionSettings.groupId
-          ? {
-              ...group,
-              sections: group.sections.map((section) =>
-                section.id === sectionSettings.sectionId ? { ...section, columns: safeColumns } : section,
-              ),
-            }
-          : group,
-      ),
-    );
-    setSectionSettings(null);
-  }
-
   function exportBackup() {
     downloadDashboardBackup({ groups, userName });
   }
@@ -531,8 +500,39 @@ function App() {
     setBookmarkTree(null);
   }
 
+  async function changeWallpaper() {
+    if (wallpaperLoading) return;
+    setWallpaperLoading(true);
+    setWallpaperError('');
+    const url = `https://picsum.photos/1920/1080?random=${crypto.randomUUID()}`;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const image = new Image();
+        const finish = (error?: Error) => {
+          window.clearTimeout(timeout);
+          image.onload = null;
+          image.onerror = null;
+          if (error) reject(error);
+          else resolve();
+        };
+        const timeout = window.setTimeout(() => finish(new Error('timeout')), 20_000);
+        image.onload = () => finish();
+        image.onerror = () => finish(new Error('load failed'));
+        image.src = url;
+      });
+      setWallpaperUrl(url);
+    } catch {
+      setWallpaperError('壁纸加载失败，请重试');
+    } finally {
+      setWallpaperLoading(false);
+    }
+  }
+
   return (
-    <main className={`app-shell${isEditMode ? ' is-edit-mode' : ' is-use-mode'}`}>
+    <main
+      className={`app-shell${isEditMode ? ' is-edit-mode' : ' is-use-mode'}`}
+      style={{ '--wallpaper-image': `url("${wallpaperUrl}")` } as CSSProperties}
+    >
       <header className="topbar">
         <div className="clock-block" aria-label={`${time}，${date}`}>
           <strong>{time}</strong>
@@ -551,6 +551,18 @@ function App() {
         </div>
 
         <div className="top-actions">
+          <button
+            className="icon-button wallpaper-button"
+            type="button"
+            onClick={() => void changeWallpaper()}
+            aria-label={wallpaperLoading ? '正在更换壁纸' : '更换壁纸'}
+            title={wallpaperLoading ? '正在更换壁纸…' : '更换壁纸'}
+            aria-busy={wallpaperLoading}
+            disabled={wallpaperLoading}
+          >
+            {wallpaperLoading ? <LoaderCircle size={18} className="wallpaper-spinner" /> : <ImagePlus size={18} />}
+          </button>
+          {wallpaperError && <span className="wallpaper-error" role="alert">{wallpaperError}</span>}
           <button
             className="top-search-button"
             type="button"
@@ -608,11 +620,16 @@ function App() {
         className="dashboard-region"
         aria-label="快捷入口卡片"
       >
-        <div className="group-rail" ref={railRef} style={{
-          '--card-gap': `${CARD_GAP}px`,
-          '--grid-column-min': `${GRID_COLUMN_MIN}px`,
-          '--grid-row-height': `${GRID_ROW_HEIGHT}px`,
+        <div className={`group-rail${isEditMode ? ' is-position-editing' : ''}`} ref={railRef} style={{
+          gridTemplateColumns: `repeat(${railColumns}, minmax(0, 1fr))`,
+          gridAutoRows: `${CARD_ROW_HEIGHT}px`,
         } as CSSProperties}>
+          {draggedSection && cardDropTarget && (() => {
+            const moving = previewLayout.find((card) => card.id === draggedSection.sectionId);
+            return moving && <div className="card-position-placeholder" aria-hidden="true" style={{
+              gridColumn: moving.x + 1, gridRow: `${moving.y + 1} / span ${moving.rows}`,
+            }} />;
+          })()}
           {isHydrated && groups.every((group) => group.sections.length === 0) && (
             <div className="empty-dashboard">
               <div className="empty-dashboard-icon">
@@ -632,30 +649,21 @@ function App() {
           {groups.map((group) => (
             <div className="flat-card-container" key={group.id}>
                 {group.sections.map((section) => {
-                  const columns = Math.min(5, Math.max(2, section.columns ?? 3));
-                  const signature = `${columns}:${railColumns}:${section.shortcuts.length}:${isEditMode}`;
-                  const measurement = cardMeasurements[section.id];
-                  const height = measurement?.signature === signature ? measurement.height
-                    : section.shortcuts.length ? 70 + Math.ceil(section.shortcuts.length / columns) * 89 : 140;
-                  const rowSpan = Math.max(1, Math.ceil((height + CARD_GAP) / (GRID_ROW_HEIGHT + CARD_GAP)));
                   const isDragging =
                     draggedSection?.groupId === group.id &&
                     draggedSection.sectionId === section.id;
-                  const dropPosition = cardDropTarget?.sectionId === section.id
-                    ? cardDropTarget.position : null;
+                  const position = previewLayout.find((card) => card.id === section.id)!;
 
                   return (
                   <section
                     id={`section-${section.id}`}
                     data-section-id={section.id}
-                    data-layout-signature={signature}
-                    className={`shortcut-section${isDragging ? ' is-dragging' : ''}${dropPosition ? ` is-drop-${dropPosition}` : ''}`}
+                    className={`shortcut-section${isDragging ? ' is-dragging' : ''}`}
                     key={section.id}
                     style={{
                       viewTransitionName: `section-${section.id}`,
-                      '--shortcut-columns': columns,
-                      gridColumn: `span ${Math.min(columns, railColumns)}`,
-                      gridRow: `span ${rowSpan}`,
+                      gridColumn: position.x + 1,
+                      gridRow: `${position.y + 1} / span ${position.rows}`,
                     } as CSSProperties}
                   >
                     <header className="section-header">
@@ -664,8 +672,8 @@ function App() {
                           <button
                             type="button"
                             className="section-drag-handle"
-                            aria-label={`拖动调整${section.title}的顺序`}
-                            title="拖动卡片调整顺序"
+                            aria-label={`拖动调整${section.title}的位置`}
+                            title="拖动卡片到空白处"
                             onPointerDown={(event) => {
                               if (event.button !== 0) return;
                               event.preventDefault();
@@ -676,6 +684,7 @@ function App() {
                                 startY: event.clientY,
                                 target: null,
                                 active: false,
+                                offsetY: event.clientY - event.currentTarget.closest('.shortcut-section')!.getBoundingClientRect().top,
                               };
                             }}
                             onPointerMove={(event) => {
@@ -687,6 +696,8 @@ function App() {
                                 setDraggedSection(drag.source);
                               }
                               setCardDragPoint({ x: event.clientX, y: event.clientY });
+                              if (event.clientY > window.innerHeight - 60) window.scrollBy(0, 20);
+                              else if (event.clientY < 60) window.scrollBy(0, -20);
                               const rail = railRef.current;
                               if (!rail) return;
                               const bounds = rail.getBoundingClientRect();
@@ -696,20 +707,11 @@ function App() {
                                 setCardDropTarget(null);
                                 return;
                               }
-                              const candidates = [...rail.querySelectorAll<HTMLElement>('.shortcut-section')]
-                                .filter((card) => card.dataset.sectionId !== drag.source.sectionId);
-                              const nearest = candidates.map((card) => {
-                                const rect = card.getBoundingClientRect();
-                                const dx = Math.max(rect.left - event.clientX, 0, event.clientX - rect.right);
-                                const dy = Math.max(rect.top - event.clientY, 0, event.clientY - rect.bottom);
-                                return { card, rect, distance: dx * dx + dy * dy };
-                              }).sort((a, b) => a.distance - b.distance)[0];
-                              drag.target = nearest ? {
-                                sectionId: nearest.card.dataset.sectionId!,
-                                position: event.clientY < nearest.rect.top ? 'before'
-                                  : event.clientY > nearest.rect.bottom ? 'after'
-                                    : event.clientX < nearest.rect.left + nearest.rect.width / 2 ? 'before' : 'after',
-                              } : null;
+                              const columnWidth = (rail.clientWidth + CARD_GAP) / railColumns;
+                              drag.target = snapCardPosition(cardLayout, drag.source.sectionId, {
+                                x: Math.max(0, Math.min(railColumns - 1, Math.floor((event.clientX - bounds.left) / columnWidth))),
+                                y: Math.max(0, Math.round((event.clientY - bounds.top - drag.offsetY) / CARD_ROW_STEP)),
+                              });
                               setCardDropTarget(drag.target);
                             }}
                             onPointerUp={() => {
@@ -730,7 +732,7 @@ function App() {
                             <GripVertical size={16} />
                           </button>
                         )}
-                        <h3>{section.title}</h3>
+                        <h2>{section.title}</h2>
                       </div>
                       {isEditMode && <div className="section-actions">
                         <button
@@ -747,21 +749,6 @@ function App() {
                           title="修改卡片名称"
                         >
                           <Pencil size={16} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setSectionSettings({
-                              groupId: group.id,
-                              sectionId: section.id,
-                              title: section.title,
-                              columns: section.columns ?? 3,
-                            })
-                          }
-                          aria-label={`设置${section.title}的布局`}
-                          title="卡片设置"
-                        >
-                          <Settings2 size={16} />
                         </button>
                         <button
                           type="button"
@@ -797,7 +784,6 @@ function App() {
 
                     {section.shortcuts.length > 0 ? (
                       <div
-                        style={{ '--shortcut-columns': Math.min(5, Math.max(2, section.columns ?? 3)) } as CSSProperties}
                         className={`shortcut-grid${shortcutDropTarget?.groupId === group.id && shortcutDropTarget.sectionId === section.id && shortcutDropTarget.shortcutId === null ? ' is-drop-target' : ''}`}
                         onDragOver={(event) => {
                           if (!draggedShortcut) return;
@@ -877,11 +863,11 @@ function App() {
                                     : undefined
                                 }
                                 onMouseEnter={(event) =>
-                                  showShortcutTooltip(event.currentTarget, shortcut.id, shortcut.url)
+                                  showShortcutTooltip(event.currentTarget, shortcut.id, shortcut.title, shortcut.url)
                                 }
                                 onMouseLeave={() => setShortcutTooltip(null)}
                                 onFocus={(event) =>
-                                  showShortcutTooltip(event.currentTarget, shortcut.id, shortcut.url)
+                                  showShortcutTooltip(event.currentTarget, shortcut.id, shortcut.title, shortcut.url)
                                 }
                                 onBlur={() => setShortcutTooltip(null)}
                                 onDragStart={(event) => {
@@ -981,7 +967,8 @@ function App() {
           role="tooltip"
           style={{ left: shortcutTooltip.left, top: shortcutTooltip.top }}
         >
-          {shortcutTooltip.url}
+          <strong className="shortcut-tooltip-title">{shortcutTooltip.title}</strong>
+          <span className="shortcut-tooltip-url">{shortcutTooltip.url}</span>
         </div>
       )}
 
@@ -1031,14 +1018,6 @@ function App() {
         initialValue={shortcutDialog?.mode === 'edit' ? shortcutDialog.shortcut : undefined}
         onClose={() => setShortcutDialog(null)}
         onSave={saveShortcut}
-      />
-
-      <SectionSettingsDialog
-        open={sectionSettings !== null}
-        sectionTitle={sectionSettings?.title ?? ''}
-        initialColumns={sectionSettings?.columns ?? 3}
-        onClose={() => setSectionSettings(null)}
-        onSave={saveSectionSettings}
       />
 
       <ConfirmDialog
