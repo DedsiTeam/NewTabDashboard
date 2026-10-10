@@ -73,7 +73,7 @@ function DialogFrame({
               <X size={19} />
             </Dialog.Close>
           </div>
-          {children}
+          <div className="dialog-body">{children}</div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
@@ -157,9 +157,10 @@ export function ConfirmDialog({
     <DialogFrame
       open={open}
       title={title}
-      description={description}
+      contentClassName="confirm-dialog"
       onOpenChange={(next) => !next && onClose()}
     >
+      <Dialog.Description className="confirm-preview">{description}</Dialog.Description>
       <div className="dialog-actions">
         <button type="button" className="secondary-button" onClick={onClose}>
           取消
@@ -376,7 +377,7 @@ export function BackupDialog({
           <AlertTriangle size={21} />
           <div>
             <strong>确定恢复“{pendingImportFile.name}”吗？</strong>
-            <p>当前姓名、卡片和快捷入口将被备份文件替换。</p>
+            <p>当前姓名、卡片、快捷入口和待办清单将被备份文件替换。</p>
           </div>
           <div className="backup-confirm-actions">
             <button type="button" onClick={() => setPendingImportFile(null)} disabled={isImporting}>

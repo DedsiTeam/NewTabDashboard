@@ -95,7 +95,16 @@ export interface DashboardGroup {
   columns?: number;
 }
 
+export interface TodoItem {
+  id: string;
+  color?: string;
+  content: string;
+  createdAt: string;
+}
+
 export interface DashboardState {
+  todos?: TodoItem[];
+  viewMode?: 'simple' | 'cards';
   groups: DashboardGroup[];
   userName: string;
 }

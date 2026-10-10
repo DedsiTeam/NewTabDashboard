@@ -53,6 +53,11 @@ function normalizeDashboardState(value: DashboardState): DashboardState {
     }));
 
   return {
+    viewMode: value.viewMode === 'cards' ? 'cards' : 'simple',
+    todos: Array.isArray(value.todos) ? value.todos.filter((todo) => todo && typeof todo.id === 'string'
+      && typeof todo.content === 'string' && todo.content.trim() && typeof todo.createdAt === 'string'
+      && Number.isFinite(Date.parse(todo.createdAt))).map((todo) => ({ id: todo.id, content: todo.content, createdAt: todo.createdAt,
+        color: typeof todo.color === 'string' && /^#[0-9a-f]{6}$/i.test(todo.color) ? todo.color : '#ffffff' })) : [],
     userName: typeof value.userName === 'string' ? value.userName.trim() : '',
     // Keep every existing link while converting older two-level layouts to one card grid.
     groups: [{

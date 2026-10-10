@@ -1,8 +1,11 @@
 import {
   Check,
+  ChevronsLeft,
   Database,
   GripVertical,
   ImagePlus,
+  LayoutGrid,
+  PanelRight,
   LoaderCircle,
   Pencil,
   Plus,
@@ -36,7 +39,8 @@ import {
   readDashboardBackup,
   saveDashboardState,
 } from './storage';
-import type { DashboardGroup, Shortcut } from './types';
+import type { DashboardGroup, Shortcut, TodoItem } from './types';
+import { TodoPanel } from './TodoPanel';
 import { buildCardLayout, moveLayoutCard, snapCardPosition, CARD_GAP, CARD_ROW_HEIGHT, CARD_ROW_STEP, type CardPosition } from './cardLayout';
 
 function makeId(prefix: string) {
@@ -115,13 +119,19 @@ function ShortcutVisual({ shortcut }: { shortcut: Shortcut }) {
 }
 
 function App() {
+  const [viewMode, setViewMode] = useState<'simple' | 'cards'>('simple');
+  const [todos, setTodos] = useState<TodoItem[]>([]);
   const [groups, setGroups] = useState<DashboardGroup[]>([]);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [actionsExpanded, setActionsExpanded] = useState(false);
+  const [actionsWidth, setActionsWidth] = useState(0);
+  const actionsRef = useRef<HTMLDivElement>(null);
   const [wallpaperUrl, setWallpaperUrl] = useState('https://picsum.photos/1920/1080');
   const [wallpaperLoading, setWallpaperLoading] = useState(false);
   const [wallpaperError, setWallpaperError] = useState('');
   const [isEditMode, setIsEditMode] = useState(false);
   const [userName, setUserName] = useState('');
+  const simpleView = viewMode === 'simple' && !isEditMode;
   const [isHydrated, setIsHydrated] = useState(false);
   const [now, setNow] = useState(new Date());
   const [shortcutDialog, setShortcutDialog] = useState<ShortcutDialogTarget | null>(null);
@@ -157,11 +167,21 @@ function App() {
   } | null>(null);
 
   useEffect(() => {
+    const actions = actionsRef.current;
+    if (!actions) return;
+    const observer = new ResizeObserver(() => setActionsWidth(actions.getBoundingClientRect().width));
+    observer.observe(actions);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     void loadDashboardState().then((state) => {
       if (cancelled) return;
       setGroups(state.groups);
       setUserName(state.userName);
+      setTodos(state.todos ?? []);
+      setViewMode(state.viewMode ?? 'simple');
       setIsHydrated(true);
     });
     return () => {
@@ -176,10 +196,10 @@ function App() {
 
   useEffect(() => {
     if (!isHydrated) return;
-    void saveDashboardState({ groups, userName }).catch((error) => {
+    void saveDashboardState({ groups, userName, todos, viewMode }).catch((error) => {
       console.error('Failed to save dashboard state:', error);
     });
-  }, [groups, isHydrated, userName]);
+  }, [groups, isHydrated, userName, todos, viewMode]);
 
   useEffect(() => {
     const rail = railRef.current;
@@ -199,7 +219,7 @@ function App() {
     rail.querySelectorAll('.shortcut-section').forEach((card) => observer.observe(card));
     measure();
     return () => observer.disconnect();
-  }, [groups, isEditMode]);
+  }, [groups, isEditMode, simpleView]);
 
   useEffect(() => {
     function handleGlobalSearchShortcut(event: KeyboardEvent) {
@@ -474,7 +494,7 @@ function App() {
   }
 
   function exportBackup() {
-    downloadDashboardBackup({ groups, userName });
+    downloadDashboardBackup({ groups, userName, todos, viewMode });
   }
 
   async function importBackup(file: File) {
@@ -482,6 +502,8 @@ function App() {
     await saveDashboardState(state);
     setGroups(state.groups);
     setUserName(state.userName);
+    setTodos(state.todos ?? []);
+    setViewMode(state.viewMode ?? 'simple');
   }
 
   async function openBookmarkImport() {
@@ -528,12 +550,7 @@ function App() {
     }
   }
 
-  return (
-    <main
-      className={`app-shell${isEditMode ? ' is-edit-mode' : ' is-use-mode'}`}
-      style={{ '--wallpaper-image': `url("${wallpaperUrl}")` } as CSSProperties}
-    >
-      <header className="topbar">
+  const clockBlock = (
         <div className="clock-block" aria-label={`${time}，${date}`}>
           <strong>{time}</strong>
           <div className="clock-details">
@@ -549,8 +566,30 @@ function App() {
             </span>
           </div>
         </div>
+  );
 
-        <div className="top-actions">
+  return (
+    <main
+      className={`app-shell${simpleView ? ' is-simple-view' : ''}${isEditMode ? ' is-edit-mode' : ' is-use-mode'}`}
+      style={{ '--wallpaper-image': `url("${wallpaperUrl}")` } as CSSProperties}
+    >
+      <header className="topbar">
+        {!simpleView && clockBlock}
+
+        <div className={`top-actions${actionsExpanded ? ' is-expanded' : ''}`}>
+          <button className="icon-button view-mode-toggle" type="button" title={viewMode === 'simple' ? '切换到卡片版' : '切换到简洁版'}
+            aria-label={viewMode === 'simple' ? '切换到卡片版' : '切换到简洁版'}
+            onClick={() => { setIsEditMode(false); setViewMode((current) => current === 'simple' ? 'cards' : 'simple'); void changeWallpaper(); }}>
+            {viewMode === 'simple' ? <LayoutGrid size={18} /> : <PanelRight size={18} />}
+          </button>
+          <div
+            id="toolbar-actions"
+            className="top-actions-reveal"
+            style={{ '--actions-width': `${actionsWidth}px` } as CSSProperties}
+            inert={!actionsExpanded}
+            aria-hidden={!actionsExpanded}
+          >
+            <div className="top-actions-content" ref={actionsRef}>
           <button
             className="icon-button wallpaper-button"
             type="button"
@@ -613,10 +652,43 @@ function App() {
           >
             <UserRound size={18} />
           </button>
+            </div>
+          </div>
+          <button
+            className="icon-button top-actions-toggle"
+            type="button"
+            onClick={() => setActionsExpanded((current) => !current)}
+            aria-expanded={actionsExpanded}
+            aria-controls="toolbar-actions"
+            aria-label={actionsExpanded ? '收起工具栏' : '展开工具栏'}
+            title={actionsExpanded ? '收起工具栏' : '展开工具栏'}
+          >
+            <ChevronsLeft size={18} />
+          </button>
         </div>
       </header>
 
-      <section
+      {simpleView ? <div className="simple-dashboard">
+        <section className="simple-start" aria-label="时间与快捷入口">
+          {clockBlock}
+          <div className="simple-shortcuts" onScroll={() => setShortcutTooltip(null)}>
+            {groups.flatMap((group) => group.sections).map((section) => <section className="simple-link-group" id={`section-${section.id}`} key={section.id}>
+              <h2>{section.title}</h2>
+              <div className="simple-link-grid">{section.shortcuts.map((shortcut) => <a className="simple-link" href={shortcut.url} key={shortcut.id} target="_blank" rel="noreferrer"
+                aria-label={`${shortcut.title}，地址：${shortcut.url}`}
+                aria-describedby={shortcutTooltip?.shortcutId === shortcut.id ? 'shortcut-address-tooltip' : undefined}
+                onMouseEnter={(event) => showShortcutTooltip(event.currentTarget, shortcut.id, shortcut.title, shortcut.url)}
+                onMouseLeave={() => setShortcutTooltip(null)}
+                onFocus={(event) => showShortcutTooltip(event.currentTarget, shortcut.id, shortcut.title, shortcut.url)}
+                onBlur={() => setShortcutTooltip(null)}>
+                <span className="shortcut-icon"><ShortcutVisual shortcut={shortcut} /></span><span className="simple-link-title">{shortcut.title}</span>
+              </a>)}</div>
+            </section>)}
+            {groups.every((group) => group.sections.length === 0) && <button className="simple-first-card" type="button" onClick={() => setNameDialog({ kind: 'section', groupId: 'dashboard' })}><Plus size={18} />添加第一张快捷入口卡片</button>}
+          </div>
+        </section>
+        <TodoPanel items={todos} onChange={setTodos} disabled={!isHydrated} />
+      </div> : <section
         className="dashboard-region"
         aria-label="快捷入口卡片"
       >
@@ -951,7 +1023,7 @@ function App() {
           ))}
         </div>
 
-      </section>
+      </section>}
 
       {draggedSection && cardDragPoint && (
         <div className="card-drag-preview" style={{ left: cardDragPoint.x, top: cardDragPoint.y }} aria-hidden="true">
