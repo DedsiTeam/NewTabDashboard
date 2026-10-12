@@ -8,6 +8,9 @@ import {
   Download,
   Folder,
   Search,
+  Square,
+  SquareCheck,
+  SquareMinus,
   Upload,
   X,
 } from 'lucide-react';
@@ -21,7 +24,7 @@ import {
   useState,
 } from 'react';
 import type { BookmarkImportNode } from './bookmarks';
-import type { Shortcut } from './types';
+import type { DashboardGroup, Shortcut } from './types';
 
 const shortcutToneOptions = [
   '#1d4ed8',
@@ -78,6 +81,54 @@ function DialogFrame({
       </Dialog.Portal>
     </Dialog.Root>
   );
+}
+
+export function FavoritesDialog({ open, groups, selectedIds, onToggle, onSelectMany, onClose, onCreate }: {
+  open: boolean;
+  groups: DashboardGroup[];
+  selectedIds: string[];
+  onToggle: (id: string) => void;
+  onSelectMany: (ids: string[], selected: boolean) => void;
+  onClose: () => void;
+  onCreate: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  useEffect(() => { if (open) setQuery(''); }, [open]);
+  const search = query.trim().toLocaleLowerCase();
+  const sections = groups.flatMap((group) => group.sections).map((section) => ({
+    ...section, shortcuts: section.shortcuts.filter((shortcut) =>
+      `${section.title} ${shortcut.title} ${shortcut.url}`.toLocaleLowerCase().includes(search)),
+  })).filter((section) => section.shortcuts.length > 0);
+  return <DialogFrame open={open} title="添加常用" description="勾选要展示的网站，取消勾选即可从常用移除。" onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+    <label className="bookmark-search"><Search size={17} /><input type="search" aria-label="搜索已有入口" placeholder="搜索已有入口…" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+    <div className="favorites-picker">
+      {sections.map((section) => {
+        const ids = section.shortcuts.map((shortcut) => shortcut.id);
+        const allSelected = ids.every((id) => selectedIds.includes(id));
+        const someSelected = ids.some((id) => selectedIds.includes(id));
+        const SelectionIcon = allSelected ? SquareCheck : someSelected ? SquareMinus : Square;
+        const action = allSelected ? '取消全选' : '全选';
+        return <section key={section.id}>
+        <div className="favorites-section-heading">
+          <h3>{section.title}</h3>
+          <button className="favorites-select-all" type="button"
+            aria-label={`${action}${section.title}${search ? '的搜索结果' : ''}`}
+            title={`${action}${search ? '当前搜索结果' : ''}`}
+            aria-pressed={allSelected}
+            onClick={() => onSelectMany(ids, !allSelected)}>
+            <SelectionIcon size={18} aria-hidden="true" />
+          </button>
+        </div>
+        {section.shortcuts.map((shortcut) => <label className="favorite-choice" key={shortcut.id}>
+          <input type="checkbox" checked={selectedIds.includes(shortcut.id)} onChange={() => onToggle(shortcut.id)} />
+          <span><strong>{shortcut.title}</strong><small>{shortcut.url}</small></span>
+        </label>)}
+      </section>;
+      })}
+      {sections.length === 0 && <p className="favorites-picker-empty">{search ? '未找到匹配的入口' : '暂无已有入口，添加一个新网址吧。'}</p>}
+    </div>
+    <div className="dialog-actions"><button className="secondary-button" type="button" onClick={onCreate}>添加新网址</button><button className="primary-button" type="button" onClick={onClose}>完成</button></div>
+  </DialogFrame>;
 }
 
 export function NameDialog({
@@ -631,130 +682,5 @@ export function BookmarkImportDialog({
         </div>
       </div>
     </DialogFrame>
-  );
-}
-
-export interface GlobalSearchItem {
-  id: string;
-  kind: 'shortcut' | 'section';
-  title: string;
-  subtitle: string;
-  searchText: string;
-}
-
-const globalSearchIcons = {
-  shortcut: Bookmark,
-  section: Folder,
-};
-
-const globalSearchLabels = {
-  shortcut: '快捷入口',
-  section: '卡片',
-};
-
-export function GlobalSearchDialog({
-  open,
-  items,
-  onClose,
-  onSelect,
-}: {
-  open: boolean;
-  items: GlobalSearchItem[];
-  onClose: () => void;
-  onSelect: (item: GlobalSearchItem) => void;
-}) {
-  const [query, setQuery] = useState('');
-  const [activeIndex, setActiveIndex] = useState(0);
-  const results = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return items.slice(0, 12);
-    return items
-      .filter((item) => item.searchText.toLowerCase().includes(normalized))
-      .slice(0, 30);
-  }, [items, query]);
-
-  useEffect(() => {
-    if (!open) return;
-    setQuery('');
-    setActiveIndex(0);
-  }, [open]);
-
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [query]);
-
-  function select(item: GlobalSearchItem) {
-    onSelect(item);
-    onClose();
-  }
-
-  return (
-    <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay global-search-overlay" />
-        <Dialog.Content
-          className="global-search-dialog"
-          aria-describedby={undefined}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowDown') {
-              event.preventDefault();
-              setActiveIndex((current) => Math.min(current + 1, results.length - 1));
-            } else if (event.key === 'ArrowUp') {
-              event.preventDefault();
-              setActiveIndex((current) => Math.max(current - 1, 0));
-            } else if (event.key === 'Enter' && results[activeIndex]) {
-              event.preventDefault();
-              select(results[activeIndex]);
-            }
-          }}
-        >
-          <Dialog.Title className="global-search-title">全局搜索</Dialog.Title>
-          <label className="global-search-input">
-            <Search size={21} />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索卡片、快捷入口或网址…"
-              autoFocus
-            />
-            <kbd>ESC</kbd>
-          </label>
-          <div className="global-search-results" role="listbox">
-            {results.length > 0 ? (
-              results.map((item, index) => {
-                const Icon = globalSearchIcons[item.kind];
-                return (
-                  <button
-                    type="button"
-                    key={`${item.kind}-${item.id}`}
-                    className={`global-search-result${index === activeIndex ? ' is-active' : ''}`}
-                    onMouseEnter={() => setActiveIndex(index)}
-                    onClick={() => select(item)}
-                    role="option"
-                    aria-selected={index === activeIndex}
-                  >
-                    <span className="global-search-result-icon"><Icon size={19} /></span>
-                    <span className="global-search-result-copy">
-                      <strong>{item.title}</strong>
-                      <small>{item.subtitle}</small>
-                    </span>
-                    <span className="global-search-result-kind">{globalSearchLabels[item.kind]}</span>
-                  </button>
-                );
-              })
-            ) : (
-              <div className="global-search-empty">
-                <Search size={28} />
-                <span>没有找到相关内容</span>
-              </div>
-            )}
-          </div>
-          <div className="global-search-hint">
-            <span><kbd>↑</kbd><kbd>↓</kbd> 选择</span>
-            <span><kbd>Enter</kbd> 打开</span>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
   );
 }

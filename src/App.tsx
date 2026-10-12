@@ -15,14 +15,13 @@ import {
   UserRound,
   X,
 } from 'lucide-react';
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import {
   BackupDialog,
   BookmarkImportDialog,
   ConfirmDialog,
-  GlobalSearchDialog,
-  type GlobalSearchItem,
+  FavoritesDialog,
   NameDialog,
   ShortcutDialog,
 } from './dialogs';
@@ -32,6 +31,8 @@ import {
   type BookmarkImportNode,
 } from './bookmarks';
 import { getFaviconCandidates } from './favicon';
+import { reorderFavorites } from './favoriteOrder';
+import { matchesShortcutSearch } from './shortcutSearch';
 import { shortcutIconMap } from './iconCatalog';
 import {
   downloadDashboardBackup,
@@ -48,7 +49,7 @@ function makeId(prefix: string) {
 }
 
 type ViewTransitionDocument = Document & {
-  startViewTransition?: (update: () => void) => unknown;
+  startViewTransition?: (update: () => void) => { finished: Promise<void>; skipTransition: () => void };
 };
 
 function commitWithAnimation(update: () => void) {
@@ -62,6 +63,7 @@ function commitWithAnimation(update: () => void) {
 }
 
 type ShortcutDialogTarget =
+  | { mode: 'favorite' }
   | { mode: 'add'; groupId: string; sectionId: string }
   | { mode: 'edit'; groupId: string; sectionId: string; shortcut: Shortcut };
 
@@ -120,10 +122,20 @@ function ShortcutVisual({ shortcut }: { shortcut: Shortcut }) {
 
 function App() {
   const [viewMode, setViewMode] = useState<'simple' | 'cards'>('simple');
+  const layoutTransitionRef = useRef<{ finished: Promise<void>; skipTransition: () => void } | null>(null);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [groups, setGroups] = useState<DashboardGroup[]>([]);
-  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [favoriteShortcutIds, setFavoriteShortcutIds] = useState<string[]>([]);
+  const [favoritesDialogOpen, setFavoritesDialogOpen] = useState(false);
+  const [editingFavorites, setEditingFavorites] = useState(false);
+  const [draggedFavoriteId, setDraggedFavoriteId] = useState<string | null>(null);
+  const [favoriteDropTarget, setFavoriteDropTarget] = useState<{ id: string; after: boolean } | null>(null);
+  const [favoritePreviewIds, setFavoritePreviewIds] = useState<string[] | null>(null);
+  const favoriteGridRef = useRef<HTMLDivElement>(null);
+  const favoritePositionsRef = useRef(new Map<string, DOMRect>());
+  const favoriteHoverRef = useRef<string | null>(null);
   const [shortcutSearch, setShortcutSearch] = useState('');
+  const [cardSearch, setCardSearch] = useState('');
   const [actionsExpanded, setActionsExpanded] = useState(false);
   const [actionsWidth, setActionsWidth] = useState(0);
   const actionsRef = useRef<HTMLDivElement>(null);
@@ -146,12 +158,21 @@ function App() {
   const railRef = useRef<HTMLDivElement>(null);
   const [railColumns, setRailColumns] = useState(1);
   const [cardHeights, setCardHeights] = useState<Record<string, number>>({});
-  const sections = groups.flatMap((group) => group.sections);
+  const cardSearchQuery = isEditMode ? '' : cardSearch.trim();
+  const visibleGroups = useMemo(() => !cardSearchQuery ? groups : groups.map((group) => ({
+    ...group,
+    sections: group.sections.map((section) => ({
+      ...section,
+      shortcuts: matchesShortcutSearch(section.title, cardSearchQuery) ? section.shortcuts
+        : section.shortcuts.filter((shortcut) => matchesShortcutSearch(`${shortcut.title} ${shortcut.url}`, cardSearchQuery)),
+    })).filter((section) => section.shortcuts.length > 0 || matchesShortcutSearch(section.title, cardSearchQuery)),
+  })), [groups, cardSearchQuery]);
+  const sections = visibleGroups.flatMap((group) => group.sections);
   const cardLayout = buildCardLayout(sections.map((section) => ({
     id: section.id,
     rows: Math.max(1, Math.ceil(((cardHeights[section.id] ?? (section.shortcuts.length
       ? 48 + 20 + Math.ceil(section.shortcuts.length / 4) * 89 : 140)) + CARD_GAP) / CARD_ROW_STEP)),
-    position: section.gridPositions?.[railColumns],
+    position: cardSearchQuery ? undefined : section.gridPositions?.[railColumns],
   })), railColumns);
   const previewLayout = draggedSection && cardDropTarget
     ? moveLayoutCard(cardLayout, draggedSection.sectionId, cardDropTarget) : cardLayout;
@@ -180,6 +201,7 @@ function App() {
     void loadDashboardState().then((state) => {
       if (cancelled) return;
       setGroups(state.groups);
+      setFavoriteShortcutIds(state.favoriteShortcutIds ?? []);
       setUserName(state.userName);
       setTodos(state.todos ?? []);
       setViewMode(state.viewMode ?? 'simple');
@@ -197,10 +219,10 @@ function App() {
 
   useEffect(() => {
     if (!isHydrated) return;
-    void saveDashboardState({ groups, userName, todos, viewMode }).catch((error) => {
+    void saveDashboardState({ groups, userName, todos, viewMode, favoriteShortcutIds }).catch((error) => {
       console.error('Failed to save dashboard state:', error);
     });
-  }, [groups, isHydrated, userName, todos, viewMode]);
+  }, [groups, isHydrated, userName, todos, viewMode, favoriteShortcutIds]);
 
   useEffect(() => {
     const rail = railRef.current;
@@ -220,18 +242,7 @@ function App() {
     rail.querySelectorAll('.shortcut-section').forEach((card) => observer.observe(card));
     measure();
     return () => observer.disconnect();
-  }, [groups, isEditMode, simpleView]);
-
-  useEffect(() => {
-    function handleGlobalSearchShortcut(event: KeyboardEvent) {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        setGlobalSearchOpen(true);
-      }
-    }
-    window.addEventListener('keydown', handleGlobalSearchShortcut);
-    return () => window.removeEventListener('keydown', handleGlobalSearchShortcut);
-  }, []);
+  }, [visibleGroups, isEditMode, simpleView]);
 
   const time = new Intl.DateTimeFormat('zh-CN', {
     hour: '2-digit',
@@ -246,62 +257,51 @@ function App() {
     weekday: 'long',
   }).format(now);
 
-  const globalSearchItems = useMemo<GlobalSearchItem[]>(() => {
-    const items: GlobalSearchItem[] = [];
-    for (const group of groups) {
-      for (const section of group.sections) {
-        items.push({
-          id: section.id,
-          kind: 'section',
-          title: section.title,
-          subtitle: group.title,
-          searchText: `${section.title} ${group.title}`,
-        });
-        for (const shortcut of section.shortcuts) {
-          items.push({
-            id: shortcut.id,
-            kind: 'shortcut',
-            title: shortcut.title,
-            subtitle: `${section.title} · ${shortcut.url}`,
-            searchText: `${shortcut.title} ${shortcut.url} ${section.title}`,
-          });
-        }
-      }
-    }
-    return items;
-  }, [groups]);
-
   const shortcutSearchQuery = shortcutSearch.trim().toLocaleLowerCase();
-  const visibleShortcutSections = useMemo(() => groups.flatMap((group) => group.sections)
-    .map((section) => ({
-      ...section,
-      shortcuts: !shortcutSearchQuery || section.title.toLocaleLowerCase().includes(shortcutSearchQuery)
-        ? section.shortcuts
-        : section.shortcuts.filter((shortcut) =>
-          `${shortcut.title} ${shortcut.url}`.toLocaleLowerCase().includes(shortcutSearchQuery)),
-    }))
-    .filter((section) => !shortcutSearchQuery || section.shortcuts.length > 0),
-  [groups, shortcutSearchQuery]);
+  const allShortcuts = useMemo(() => groups.flatMap((group) => group.sections)
+    .flatMap((section) => section.shortcuts), [groups]);
+  const favoriteShortcuts = useMemo(() => favoriteShortcutIds.flatMap((id) => {
+    const shortcut = allShortcuts.find((item) => item.id === id);
+    return shortcut ? [shortcut] : [];
+  }), [allShortcuts, favoriteShortcutIds]);
+  const displayedFavorites = favoritePreviewIds ? favoritePreviewIds.flatMap((id) => {
+    const shortcut = allShortcuts.find((item) => item.id === id);
+    return shortcut ? [shortcut] : [];
+  }) : favoriteShortcuts;
+  const visibleFavorites = displayedFavorites.filter((shortcut) =>
+    `${shortcut.title} ${shortcut.url}`.toLocaleLowerCase().includes(shortcutSearchQuery));
 
-  function selectGlobalSearchItem(item: GlobalSearchItem) {
-    if (item.kind === 'shortcut') {
-      const shortcut = groups
-        .flatMap((group) => group.sections)
-        .flatMap((section) => section.shortcuts)
-        .find((candidate) => candidate.id === item.id);
-      if (shortcut) window.open(shortcut.url, '_blank', 'noopener,noreferrer');
-      return;
-    }
-
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        document.getElementById(`${item.kind}-${item.id}`)?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'center',
-          inline: 'center',
-        });
-      });
+  function captureFavoritePositions() {
+    favoritePositionsRef.current.clear();
+    favoriteGridRef.current?.querySelectorAll<HTMLElement>('[data-favorite-id]').forEach((tile) => {
+      favoritePositionsRef.current.set(tile.dataset.favoriteId!, tile.getBoundingClientRect());
     });
+  }
+
+  useLayoutEffect(() => {
+    const previous = favoritePositionsRef.current;
+    if (!previous.size) return;
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    favoriteGridRef.current?.querySelectorAll<HTMLElement>('[data-favorite-id]').forEach((tile) => {
+      const before = previous.get(tile.dataset.favoriteId!);
+      tile.getAnimations().forEach((animation) => animation.cancel());
+      if (!before || reduceMotion) return;
+      const after = tile.getBoundingClientRect();
+      const x = before.left - after.left;
+      const y = before.top - after.top;
+      if (Math.abs(x) < 1 && Math.abs(y) < 1) return;
+      tile.animate([
+        { transform: `translate(${x}px, ${y}px)` },
+        { transform: 'translate(0, 0)' },
+      ], { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    });
+    previous.clear();
+  }, [favoritePreviewIds, favoriteShortcutIds]);
+
+  function toggleFavorite(id: string) {
+    setFavoriteShortcutIds((current) => current.includes(id)
+      ? current.filter((item) => item !== id) : [...current, id]);
+    setShortcutTooltip(null);
   }
 
   function moveSection(source: DraggedSection, target: CardDropTarget) {
@@ -476,19 +476,34 @@ function App() {
 
   function saveShortcut(shortcut: Omit<Shortcut, 'id'>) {
     if (!shortcutDialog) return;
+    if (shortcutDialog.mode === 'favorite') {
+      const newShortcut = { ...shortcut, id: makeId('shortcut') };
+      setGroups((current) => current.map((group) => {
+        if (group.id !== 'dashboard') return group;
+        const section = group.sections.find((item) => item.title === '常用');
+        return { ...group, sections: section
+          ? group.sections.map((item) => item.id === section.id
+            ? { ...item, shortcuts: [...item.shortcuts, newShortcut] } : item)
+          : [...group.sections, { id: makeId('section'), title: '常用', shortcuts: [newShortcut] }] };
+      }));
+      setFavoriteShortcutIds((current) => [...current, newShortcut.id]);
+      setShortcutDialog(null);
+      return;
+    }
+    const target = shortcutDialog;
     setGroups((current) =>
       current.map((group) =>
-        group.id === shortcutDialog.groupId
+        group.id === target.groupId
           ? {
               ...group,
               sections: group.sections.map((section) =>
-                section.id === shortcutDialog.sectionId
+                section.id === target.sectionId
                   ? {
                       ...section,
                       shortcuts:
-                        shortcutDialog.mode === 'edit'
+                        target.mode === 'edit'
                           ? section.shortcuts.map((item) =>
-                              item.id === shortcutDialog.shortcut.id
+                              item.id === target.shortcut.id
                                 ? { ...shortcut, id: item.id }
                                 : item,
                             )
@@ -507,13 +522,14 @@ function App() {
   }
 
   function exportBackup() {
-    downloadDashboardBackup({ groups, userName, todos, viewMode });
+    downloadDashboardBackup({ groups, userName, todos, viewMode, favoriteShortcutIds });
   }
 
   async function importBackup(file: File) {
     const state = await readDashboardBackup(file);
     await saveDashboardState(state);
     setGroups(state.groups);
+    setFavoriteShortcutIds(state.favoriteShortcutIds ?? []);
     setUserName(state.userName);
     setTodos(state.todos ?? []);
     setViewMode(state.viewMode ?? 'simple');
@@ -533,6 +549,34 @@ function App() {
     setGroups((current) => current.map((group) => group.id === 'dashboard'
       ? { ...group, sections: [...group.sections, ...importedSections] } : group));
     setBookmarkTree(null);
+  }
+
+  function switchLayout() {
+    const update = () => { setIsEditMode(false); setViewMode((current) => current === 'simple' ? 'cards' : 'simple'); setShortcutTooltip(null); };
+    layoutTransitionRef.current?.skipTransition();
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      update();
+    } else {
+      const start = (document as ViewTransitionDocument).startViewTransition;
+      if (start) {
+        document.documentElement.dataset.layoutTransition = 'active';
+        const transition = start.call(document, () => flushSync(update));
+        layoutTransitionRef.current = transition;
+        const finish = () => {
+          if (layoutTransitionRef.current !== transition) return;
+          delete document.documentElement.dataset.layoutTransition;
+          layoutTransitionRef.current = null;
+        };
+        void transition.finished.then(finish, finish);
+      } else {
+        flushSync(update);
+        document.querySelector('.app-shell')?.animate([
+          { opacity: .25, transform: 'translateY(10px)' },
+          { opacity: 1, transform: 'translateY(0)' },
+        ], { duration: 300, easing: 'cubic-bezier(.2,.8,.2,1)' });
+      }
+    }
+    void changeWallpaper();
   }
 
   async function changeWallpaper() {
@@ -588,13 +632,16 @@ function App() {
     >
       <header className="topbar">
         {!simpleView && clockBlock}
+        {!simpleView && <div className="card-search" role="search" aria-label="搜索快捷入口卡片">
+          <Search size={18} aria-hidden="true" />
+          <input type="search" aria-label="搜索卡片、网站或网址" placeholder={isEditMode ? '完成编辑后搜索' : '搜索卡片、网站或网址…'}
+            value={cardSearch} disabled={isEditMode} aria-controls="card-search-results"
+            onChange={(event) => { setCardSearch(event.target.value); setShortcutTooltip(null); }}
+            onKeyDown={(event) => { if (event.key === 'Escape') setCardSearch(''); }} />
+          {cardSearch && <button type="button" aria-label="清空卡片搜索" onClick={() => setCardSearch('')}><X size={16} /></button>}
+        </div>}
 
         <div className={`top-actions${actionsExpanded ? ' is-expanded' : ''}`}>
-          <button className="icon-button view-mode-toggle" type="button" title={viewMode === 'simple' ? '切换到卡片版' : '切换到简洁版'}
-            aria-label={viewMode === 'simple' ? '切换到卡片版' : '切换到简洁版'}
-            onClick={() => { setIsEditMode(false); setViewMode((current) => current === 'simple' ? 'cards' : 'simple'); void changeWallpaper(); }}>
-            {viewMode === 'simple' ? <LayoutGrid size={18} /> : <PanelRight size={18} />}
-          </button>
           <div
             id="toolbar-actions"
             className="top-actions-reveal"
@@ -603,6 +650,11 @@ function App() {
             aria-hidden={!actionsExpanded}
           >
             <div className="top-actions-content" ref={actionsRef}>
+          <button className="icon-button view-mode-toggle" type="button" title={viewMode === 'simple' ? '切换到卡片版' : '切换到简洁版'}
+            aria-label={viewMode === 'simple' ? '切换到卡片版' : '切换到简洁版'}
+            onClick={switchLayout}>
+            {viewMode === 'simple' ? <LayoutGrid size={18} /> : <PanelRight size={18} />}
+          </button>
           <button
             className="icon-button wallpaper-button"
             type="button"
@@ -615,17 +667,6 @@ function App() {
             {wallpaperLoading ? <LoaderCircle size={18} className="wallpaper-spinner" /> : <ImagePlus size={18} />}
           </button>
           {wallpaperError && <span className="wallpaper-error" role="alert">{wallpaperError}</span>}
-          <button
-            className="top-search-button"
-            type="button"
-            onClick={() => setGlobalSearchOpen(true)}
-            aria-label="全局搜索"
-            title="全局搜索（Ctrl + K）"
-          >
-            <Search size={17} />
-            <span>搜索</span>
-            <kbd>Ctrl K</kbd>
-          </button>
           <button
             className={`mode-toggle-button${isEditMode ? ' is-active' : ''}`}
             type="button"
@@ -684,42 +725,105 @@ function App() {
       {simpleView ? <div className="simple-dashboard">
         <section className="simple-start" aria-label="时间与快捷入口">
           {clockBlock}
-          <div className="simple-shortcut-search" role="search" aria-label="搜索快捷入口">
+          <div className="simple-shortcut-search" role="search" aria-label="搜索常用入口">
             <Search size={18} aria-hidden="true" />
             <input
               type="search"
-              aria-label="搜索快捷入口"
+              aria-label="搜索常用入口"
               aria-controls="simple-shortcut-results"
-              placeholder="搜索快捷入口…"
+              placeholder="搜索常用入口…"
               value={shortcutSearch}
               onChange={(event) => { setShortcutSearch(event.target.value); setShortcutTooltip(null); }}
               onKeyDown={(event) => { if (event.key === 'Escape') setShortcutSearch(''); }}
             />
             {shortcutSearch && <button type="button" aria-label="清空搜索" onClick={() => setShortcutSearch('')}><X size={16} /></button>}
           </div>
-          <div id="simple-shortcut-results" className="simple-shortcuts" onScroll={() => setShortcutTooltip(null)}>
-            {visibleShortcutSections.map((section) => <section className="simple-link-group" id={`section-${section.id}`} key={section.id}>
-              <h2>{section.title}</h2>
-              <div className="simple-link-grid">{section.shortcuts.map((shortcut) => <a className="simple-link" href={shortcut.url} key={shortcut.id} target="_blank" rel="noreferrer"
+          <section className="simple-link-group" aria-label="常用入口">
+              <div className="favorites-heading">
+                <h2>常用</h2>
+                <div className="favorites-actions">
+                  {favoriteShortcuts.length > 0 && <button type="button" aria-pressed={editingFavorites} onClick={() => { setEditingFavorites((current) => !current); setShortcutTooltip(null); }}>{editingFavorites ? <Check size={14} /> : <Pencil size={14} />}{editingFavorites ? '完成' : '管理'}</button>}
+                  <button type="button" disabled={!isHydrated} onClick={() => setFavoritesDialogOpen(true)}><Plus size={15} />添加常用</button>
+                </div>
+              </div>
+            <div id="simple-shortcut-results" className="simple-shortcuts" onScroll={() => setShortcutTooltip(null)}
+              onDragOver={(event) => { if (draggedFavoriteId) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; } }}
+              onDrop={(event) => {
+                if (!draggedFavoriteId) return;
+                event.preventDefault();
+                if (favoritePreviewIds) setFavoriteShortcutIds(favoritePreviewIds);
+                setFavoritePreviewIds(null);
+                setDraggedFavoriteId(null);
+                setFavoriteDropTarget(null);
+                favoriteHoverRef.current = null;
+              }}>
+              <div ref={favoriteGridRef} className={`simple-link-grid${editingFavorites ? ' is-sorting-favorites' : ''}`}>{visibleFavorites.map((shortcut) => <div
+                className={`favorite-link-wrap${draggedFavoriteId === shortcut.id ? ' is-dragging' : ''}${favoriteDropTarget?.id === shortcut.id ? (favoriteDropTarget.after ? ' drop-after' : ' drop-before') : ''}`}
+                key={shortcut.id}
+                data-favorite-id={shortcut.id}
+                onDragOver={(event) => {
+                  if (!editingFavorites || !draggedFavoriteId || draggedFavoriteId === shortcut.id) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = 'move';
+                  if (favoriteHoverRef.current === shortcut.id) return;
+                  const bounds = event.currentTarget.getBoundingClientRect();
+                  const after = event.clientX >= bounds.left + bounds.width / 2;
+                  favoriteHoverRef.current = shortcut.id;
+                  captureFavoritePositions();
+                  setFavoritePreviewIds((current) => reorderFavorites(current ?? favoriteShortcutIds, draggedFavoriteId, shortcut.id, after));
+                  setFavoriteDropTarget({ id: shortcut.id, after });
+                }}
+                onDragLeave={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    setFavoriteDropTarget((current) => current?.id === shortcut.id ? null : current);
+                  }
+                }}
+                onDrop={(event) => {
+                  if (!editingFavorites || !draggedFavoriteId) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (favoritePreviewIds) setFavoriteShortcutIds(favoritePreviewIds);
+                  setFavoritePreviewIds(null);
+                  setDraggedFavoriteId(null);
+                  setFavoriteDropTarget(null);
+                  favoriteHoverRef.current = null;
+                }}><a className="simple-link" href={shortcut.url} target="_blank" rel="noreferrer"
+                draggable={editingFavorites}
+                onClick={(event) => { if (editingFavorites) event.preventDefault(); }}
+                onDragStart={(event) => {
+                  if (!editingFavorites) return;
+                  event.dataTransfer.effectAllowed = 'move';
+                  event.dataTransfer.setData('text/plain', shortcut.id);
+                  setDraggedFavoriteId(shortcut.id);
+                  setFavoritePreviewIds(favoriteShortcutIds);
+                  favoriteHoverRef.current = null;
+                  setShortcutTooltip(null);
+                }}
+                onDragEnd={() => {
+                  captureFavoritePositions();
+                  setFavoritePreviewIds(null);
+                  setDraggedFavoriteId(null);
+                  setFavoriteDropTarget(null);
+                  favoriteHoverRef.current = null;
+                }}
                 aria-label={`${shortcut.title}，地址：${shortcut.url}`}
                 aria-describedby={shortcutTooltip?.shortcutId === shortcut.id ? 'shortcut-address-tooltip' : undefined}
-                onMouseEnter={(event) => showShortcutTooltip(event.currentTarget, shortcut.id, shortcut.title, shortcut.url)}
+                onMouseEnter={(event) => { if (!draggedFavoriteId) showShortcutTooltip(event.currentTarget, shortcut.id, shortcut.title, shortcut.url); }}
                 onMouseLeave={() => setShortcutTooltip(null)}
                 onFocus={(event) => showShortcutTooltip(event.currentTarget, shortcut.id, shortcut.title, shortcut.url)}
                 onBlur={() => setShortcutTooltip(null)}>
                 <span className="shortcut-icon"><ShortcutVisual shortcut={shortcut} /></span><span className="simple-link-title">{shortcut.title}</span>
-              </a>)}</div>
-            </section>)}
-            {shortcutSearchQuery && visibleShortcutSections.length === 0 && <p className="simple-search-empty" role="status">未找到匹配的快捷入口</p>}
-            {!shortcutSearchQuery && groups.every((group) => group.sections.length === 0) && <button className="simple-first-card" type="button" onClick={() => setNameDialog({ kind: 'section', groupId: 'dashboard' })}><Plus size={18} />添加第一张快捷入口卡片</button>}
-          </div>
+              </a>{editingFavorites && <button className="favorite-remove" type="button" aria-label={`从常用移除${shortcut.title}`} title="从常用移除" onClick={() => toggleFavorite(shortcut.id)}><X size={13} /></button>}</div>)}</div>
+              {shortcutSearchQuery && visibleFavorites.length === 0 && <p className="simple-search-empty" role="status">未找到匹配的常用入口</p>}
+            </div>
+          </section>
         </section>
         <TodoPanel items={todos} onChange={setTodos} disabled={!isHydrated} />
       </div> : <section
         className="dashboard-region"
         aria-label="快捷入口卡片"
       >
-        <div className={`group-rail${isEditMode ? ' is-position-editing' : ''}`} ref={railRef} style={{
+        <div id="card-search-results" className={`group-rail${isEditMode ? ' is-position-editing' : ''}`} ref={railRef} style={{
           gridTemplateColumns: `repeat(${railColumns}, minmax(0, 1fr))`,
           gridAutoRows: `${CARD_ROW_HEIGHT}px`,
         } as CSSProperties}>
@@ -745,7 +849,8 @@ function App() {
               </button>
             </div>
           )}
-          {groups.map((group) => (
+          {cardSearchQuery && sections.length === 0 && <p className="card-search-empty" role="status">未找到匹配的卡片或入口</p>}
+          {visibleGroups.map((group) => (
             <div className="flat-card-container" key={group.id}>
                 {group.sections.map((section) => {
                   const isDragging =
@@ -1071,13 +1176,6 @@ function App() {
         </div>
       )}
 
-      <GlobalSearchDialog
-        open={globalSearchOpen}
-        items={globalSearchItems}
-        onClose={() => setGlobalSearchOpen(false)}
-        onSelect={selectGlobalSearchItem}
-      />
-
       <NameDialog
         open={nameDialog !== null}
         title={
@@ -1110,6 +1208,21 @@ function App() {
         }
         onClose={() => setNameDialog(null)}
         onSubmit={saveName}
+      />
+
+      <FavoritesDialog
+        open={favoritesDialogOpen}
+        groups={groups}
+        selectedIds={favoriteShortcutIds}
+        onToggle={toggleFavorite}
+        onSelectMany={(ids, selected) => {
+          setFavoriteShortcutIds((current) => selected
+            ? [...new Set([...current, ...ids])]
+            : current.filter((id) => !ids.includes(id)));
+          setShortcutTooltip(null);
+        }}
+        onClose={() => setFavoritesDialogOpen(false)}
+        onCreate={() => { setFavoritesDialogOpen(false); setShortcutDialog({ mode: 'favorite' }); }}
       />
 
       <ShortcutDialog

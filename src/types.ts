@@ -103,6 +103,7 @@ export interface TodoItem {
 }
 
 export interface DashboardState {
+  favoriteShortcutIds?: string[];
   todos?: TodoItem[];
   viewMode?: 'simple' | 'cards';
   groups: DashboardGroup[];

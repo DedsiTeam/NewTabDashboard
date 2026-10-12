@@ -53,6 +53,10 @@ function normalizeDashboardState(value: DashboardState): DashboardState {
     }));
 
   return {
+    favoriteShortcutIds: Array.isArray(value.favoriteShortcutIds)
+      ? [...new Set(value.favoriteShortcutIds.filter((id) => typeof id === 'string'
+        && sections.some((section) => section.shortcuts.some((shortcut) => shortcut.id === id))))]
+      : [],
     viewMode: value.viewMode === 'cards' ? 'cards' : 'simple',
     todos: Array.isArray(value.todos) ? value.todos.filter((todo) => todo && typeof todo.id === 'string'
       && typeof todo.content === 'string' && todo.content.trim() && typeof todo.createdAt === 'string'
