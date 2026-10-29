@@ -58,6 +58,27 @@ export function moveLayoutCard(layout: LayoutCard[], id: string, target: CardPos
   return layout.map((card) => placed.find((item) => item.id === card.id)!);
 }
 
+// Keep every card inside the available height, spilling into columns to the right.
+export function fitCardLayout(layout: LayoutCard[], height: number): LayoutCard[] {
+  const limit = Math.max(1, Math.floor(height));
+  const placed: LayoutCard[] = [];
+  for (const card of layout) {
+    const next = { ...card, rows: Math.min(card.rows, limit) };
+    if (next.y + next.rows > limit) next.y = 0;
+    while (true) {
+      const collision = placed.find((other) => overlaps(next, other));
+      if (!collision) break;
+      next.y = collision.y + collision.rows;
+      if (next.y + next.rows > limit) {
+        next.x += 1;
+        next.y = 0;
+      }
+    }
+    placed.push(next);
+  }
+  return placed;
+}
+
 // Snap near either neighbour edge without automatically compacting the column.
 export function snapCardPosition(layout: LayoutCard[], id: string, target: CardPosition): CardPosition {
   const moving = layout.find((card) => card.id === id);

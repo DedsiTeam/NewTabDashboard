@@ -2206,43 +2206,6 @@ html, body, #root, .app-shell { max-width: 100%; overflow-x: clip; }
   .clock-details { white-space: normal; }
 }
 
-/* Reveal toolbar controls to the left of the persistent toggle. */
-.top-actions { flex-wrap: nowrap; gap: 0; }
-.top-actions-reveal {
-  width: 0;
-  margin-right: 0;
-  overflow: hidden;
-  opacity: 0;
-  visibility: hidden;
-  transition: width 280ms ease, margin-right 280ms ease, opacity 180ms ease, visibility 0s 280ms;
-}
-.top-actions-content {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  width: max-content;
-  max-width: calc(100vw - 136px);
-  flex-wrap: wrap;
-  padding: 3px 0;
-}
-.top-actions.is-expanded .top-actions-reveal {
-  width: var(--actions-width);
-  margin-right: 8px;
-  opacity: 1;
-  visibility: visible;
-  transition: width 280ms ease, margin-right 280ms ease, opacity 220ms 50ms ease, visibility 0s;
-}
-.top-actions-toggle { flex-shrink: 0; }
-.top-actions-toggle svg { transition: transform 280ms ease; }
-.top-actions.is-expanded .top-actions-toggle svg { transform: rotate(180deg); }
-@media (prefers-reduced-motion: reduce) {
-  .top-actions-reveal,
-  .top-actions.is-expanded .top-actions-reveal,
-  .top-actions-toggle svg { transition: none; }
-}
-
-/* Simple view: a quiet launch area paired with a glass task list. */
 .app-shell.is-simple-view {
   height: 100dvh;
   min-height: 0;
@@ -2596,30 +2559,8 @@ html, body, #root, .app-shell { max-width: 100%; overflow-x: clip; }
 
 .top-actions .view-mode-toggle, .top-actions .wallpaper-button { flex-shrink: 0; }
 
-html[data-layout-transition] .shortcut-section { view-transition-name: none !important; }
-html[data-layout-transition]::view-transition-old(root) { animation: layout-out 180ms ease-out both; }
-html[data-layout-transition]::view-transition-new(root) { animation: layout-in 320ms cubic-bezier(.2,.8,.2,1) both; }
-@keyframes layout-out { to { opacity: 0; transform: translateY(-8px); } }
-@keyframes layout-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-@media (prefers-reduced-motion: reduce) {
-  html[data-layout-transition]::view-transition-old(root), html[data-layout-transition]::view-transition-new(root) { animation: none; }
-}
 
-.app-shell:not(.is-simple-view) .topbar { display: grid; grid-template-columns: minmax(0, 1fr) clamp(240px, 28vw, 520px) minmax(0, 1fr); }
-.app-shell:not(.is-simple-view) .top-actions { justify-self: end; }
-.card-search { display: flex; align-items: center; gap: 10px; min-width: 0; height: 42px; padding: 0 12px; border: 1px solid rgba(255,255,255,.3); border-radius: 10px; color: rgba(255,255,255,.85); background: rgba(255,255,255,.1); backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%); box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 4px 16px rgba(0,0,0,.08); }
-.card-search:focus-within { border-color: #c1c9f1; box-shadow: 0 0 0 3px rgba(193,201,241,.15); }
-.card-search input { min-width: 0; width: 100%; padding: 0; border: 0; outline: 0; color: #fff; background: transparent; font-size: 14px; }
-.card-search input::placeholder { color: rgba(255,255,255,.65); }
-.card-search input::-webkit-search-cancel-button { display: none; }
-.card-search button { display: grid; place-items: center; flex-shrink: 0; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; color: inherit; background: transparent; cursor: pointer; }
-.card-search button:hover { background: rgba(255,255,255,.15); }
-.card-search button:focus-visible { outline: 2px solid #c1c9f1; outline-offset: 2px; }
-.card-search-empty { grid-column: 1 / -1; margin: 0; padding: 32px 16px; text-align: center; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,.5); }
-@media (max-width: 1400px) {
-  .app-shell:not(.is-simple-view) .topbar { grid-template-columns: minmax(0, 1fr) auto; }
-  .card-search { grid-column: 1 / -1; grid-row: 2; width: min(100%, 520px); justify-self: center; }
-}
+
 
 .todo-create-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .todo-color-control {
@@ -2638,3 +2579,206 @@ html[data-layout-transition]::view-transition-new(root) { animation: layout-in 3
 .todo-color-control:has(input:disabled) { opacity: .4; cursor: default; }
 .todo-create-footer { flex-wrap: wrap; }
 .todo-create-actions { margin-left: auto; }
+
+/* The viewport owns the height; the content receives the remaining space. */
+html, body, #root { height: 100%; min-height: 0; overflow: hidden; }
+.app-shell, .app-shell.is-simple-view {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  padding: 0;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.app-shell .topbar, .app-shell:not(.is-simple-view) .topbar {
+  position: relative;
+  inset: auto;
+  display: flex;
+  flex: 0 0 32px;
+  width: 100%;
+  max-width: none;
+  height: 32px;
+  min-height: 0;
+  flex-wrap: nowrap;
+  gap: .5rem;
+  margin: 0;
+  padding: 0 12px;
+  z-index: 20;
+  border-bottom: 1px solid rgba(255,255,255,.16);
+  border-radius: 0;
+  background: rgba(25,30,40,.35);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  backdrop-filter: blur(24px) saturate(150%);
+}
+.topbar .clock-block { min-width: 0; gap: .5rem; }
+.topbar .clock-block > strong { font-size: .75rem; letter-spacing: 0; }
+.topbar .clock-details { flex-direction: row; gap: .5rem; }
+.topbar .clock-details p, .topbar .clock-greeting { font-size: .625rem; line-height: 1rem; }
+.topbar .top-actions { flex: 0 0 auto; margin: 0 0 0 auto; height: 100%; gap: 4px; flex-wrap: nowrap; }
+.topbar button {
+  height: 26px;
+  min-height: 0;
+  padding: 0 8px;
+  border-radius: .25rem;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+}
+.topbar .icon-button { width: 28px; padding: 0; }
+.topbar svg { width: 14px; height: 14px; flex-shrink: 0; }
+.topbar .top-actions button {
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.topbar .top-actions button:hover:not(:disabled),
+.topbar .top-actions .mode-toggle-button.is-active {
+  background: rgba(255,255,255,.18);
+  box-shadow: none;
+}
+.dashboard-region, .simple-dashboard { flex: 1; height: 0; min-height: 0; overflow: hidden; }
+.dashboard-region .group-rail {
+  height: 100%;
+  min-height: 0;
+  padding-bottom: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.group-rail::-webkit-scrollbar { display: block; height: 8px; }
+.group-rail::-webkit-scrollbar-thumb { border-radius: 4px; background: rgba(255,255,255,.3); }
+.group-rail .shortcut-section {
+  display: flex;
+  flex-direction: column;
+  max-height: var(--card-max-height);
+  min-height: 0;
+  overflow: hidden;
+}
+.group-rail .section-header { flex-shrink: 0; }
+.group-rail .shortcut-grid {
+  min-height: 0;
+  flex-shrink: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(var(--section-rows), 82px);
+  grid-auto-flow: row;
+  overflow: hidden;
+}
+.card-page-controls { display: flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 12px; height: 28px; color: #fff; font-size: 12px; }
+.card-page-controls button { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; color: inherit; background: rgba(255,255,255,.1); cursor: pointer; }
+.card-page-controls button:disabled { opacity: .35; cursor: default; }
+.simple-start > .simple-link-group { flex: 1; }
+.simple-shortcuts {
+  flex: 1;
+  height: 0;
+  max-height: none;
+  display: block;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-gutter: auto;
+}
+.simple-shortcuts .simple-link-grid {
+  height: 100%;
+  grid-template-columns: none;
+  grid-template-rows: repeat(auto-fill, 96px);
+  grid-auto-flow: column;
+  grid-auto-columns: 80px;
+  align-content: start;
+}
+.todo-list { overflow-x: auto; overflow-y: hidden; }
+.todo-list ul { height: 100%; display: flex; flex-flow: column wrap; align-content: flex-start; gap: 0 16px; }
+.todo-list .todo-item { flex: 0 0 auto; width: 100%; max-height: 100%; overflow: hidden; }
+@media (max-width: 900px) {
+  .topbar .clock-greeting { display: none; }
+}
+@media (max-width: 680px) {
+  .topbar .clock-details { display: none; }
+}
+
+/* Date and time stay on the left; menu controls stay visible on the right. */
+.topbar .menu-clock {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 10px;
+  margin: 0;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.app-shell > .dashboard-region, .app-shell > .simple-dashboard {
+  width: 100%;
+  padding: 1rem;
+}
+@media (max-width: 480px) {
+  .app-shell .topbar, .app-shell:not(.is-simple-view) .topbar { padding-inline: 4px; gap: 4px; }
+  .topbar .top-actions { gap: 0; }
+  .topbar .icon-button { width: 24px; }
+  .topbar .top-actions button span { display: none; }
+  .topbar .menu-clock { gap: 4px; font-size: 10px; }
+}
+
+/* A compact, centered workspace for the simple view. */
+.app-shell > .simple-dashboard {
+  max-width: 1280px;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-rows: minmax(0, 1fr);
+  column-gap: 48px;
+}
+.simple-dashboard > .simple-start,
+.simple-dashboard > .todo-panel {
+  margin-top: clamp(24px, 9dvh, 112px);
+}
+.simple-dashboard .simple-start { padding: 0; }
+.simple-start .clock-block {
+  justify-content: flex-start;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+.simple-start .clock-block > strong { font-size: clamp(48px, 5vw, 64px); font-weight: 450; }
+.simple-start .clock-details { gap: 6px; }
+.simple-start .clock-details p { font-size: 14px; }
+.simple-start .clock-greeting { font-size: 12px; line-height: 1.6; }
+.simple-shortcut-search { min-height: 46px; margin-bottom: 28px; }
+.simple-shortcuts .simple-link-grid {
+  height: auto;
+  min-height: 96px;
+  grid-template-rows: 96px;
+  grid-auto-columns: 88px;
+  gap: 12px;
+  padding: 4px 0;
+}
+.simple-dashboard .favorites-heading { margin-bottom: 12px; }
+.simple-dashboard .todo-panel {
+  padding: 0;
+}
+.simple-dashboard .todo-create { margin: 0 0 16px; background: rgba(15,23,42,.15); }
+.simple-dashboard .todo-list ul { padding-inline: 0; }
+@media (max-width: 900px) {
+  .app-shell > .simple-dashboard { grid-template-columns: minmax(0, 1fr) 300px; column-gap: 24px; }
+  .simple-start .clock-block { flex-direction: column; align-items: flex-start; gap: 12px; }
+}
+@media (max-width: 680px) {
+  .app-shell > .simple-dashboard {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1.1fr) minmax(0, 1fr);
+    gap: 20px;
+  }
+  .simple-dashboard > .simple-start, .simple-dashboard > .todo-panel { margin-top: 0; }
+  .simple-start .clock-block { flex-direction: row; align-items: center; gap: 16px; margin-bottom: 16px; }
+  .simple-start .clock-block > strong { font-size: 40px; }
+  .simple-start .clock-details p { font-size: 12px; }
+  .simple-start .clock-greeting { display: none; }
+  .simple-shortcut-search { margin-bottom: 16px; }
+}
+@media (max-height: 650px) {
+  .simple-dashboard > .simple-start, .simple-dashboard > .todo-panel { margin-top: 0; }
+  .simple-start .clock-block, .simple-shortcut-search { margin-bottom: 12px; }
+  .simple-start .clock-block > strong { font-size: 40px; }
+}
